@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="description" content="臨床工学技士向けセミナー・研修会の横断検索">
+  <title>過去のイベント | CE Seminar Finder</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="site-header">
+    <a class="brand" href="../"><span class="brand-mark">CE</span><span>Seminar Finder<small>学びを、見つけやすく。</small></span></a>
+    <nav aria-label="主要メニュー"><a href="../events/">イベント</a><a href="../archive/">過去のイベント</a><a href="../about/">このサイトについて</a></nav>
+  </header>
+  <main id="main">
+<section class="page-intro">
+  <p class="eyebrow">ARCHIVE</p>
+  <h1>過去のイベント</h1>
+  <p>終了したイベントを確認できます。</p>
+</section>
+<main class="listing-layout">
+  <details class="filters" open>
+    <summary>絞り込み条件</summary>
+    <div class="filter-body">
+      <label>キーワード<input id="keyword" type="search" placeholder="2文字以上"></label>
+      <label>ジャンル<select id="genre"><option value="">すべて</option><option value="血液浄化">血液浄化</option><option value="呼吸">呼吸</option><option value="循環">循環</option><option value="医療機器管理">医療機器管理</option><option value="手術室">手術室</option><option value="教育・研究">教育・研究</option><option value="DX・IT">DX・IT</option><option value="その他">その他</option></select></label>
+      <label>開催形式<select id="format"><option value="">すべて</option><option value="Web">Web</option><option value="オンデマンド">オンデマンド</option><option value="ハイブリッド">ハイブリッド</option><option value="現地開催">現地開催</option><option value="要確認">要確認</option></select></label>
+      <label>イベント種別<select id="event-type"><option value="">すべて</option><option value="セミナー">セミナー</option><option value="研修会">研修会</option><option value="講習会">講習会</option><option value="学会・大会">学会・大会</option><option value="研究会">研究会</option><option value="オンデマンド">オンデマンド</option><option value="その他">その他</option></select></label>
+      <label>参加費<select id="fee"><option value="">すべて</option><option value="無料">無料</option><option value="有料">有料</option><option value="要確認">要確認</option></select></label>
+      <label>開催月<input id="month" type="month"></label>
+      <label class="check"><input id="deadline-open" type="checkbox">申込受付中のみ</label>
+      <button id="clear-filters" type="button" class="secondary-button">条件をすべて解除</button>
+    </div>
+  </details>
+  <section class="results" aria-labelledby="result-heading">
+    <div class="result-toolbar">
+      <h2 id="result-heading"><span id="result-count">0</span>件</h2>
+      <label>並び順<select id="sort"><option value="date">開催日が近い順</option><option value="deadline">申込締切が近い順</option><option value="title">イベント名順</option></select></label>
+    </div>
+    <p id="active-filters" class="active-filters" aria-live="polite"></p>
+    <div id="event-list" class="card-grid"><p class="empty">該当するイベントはありません。</p></div>
+    <p id="no-results" class="empty" hidden>条件に合うイベントはありません。</p>
+  </section>
+</main>
+</main>
+  <footer><p><strong>CE Seminar Finder</strong></p><p>掲載内容は参考情報です。必ず主催者の公式情報をご確認ください。</p><p>データ更新: <time datetime="2026-07-04T12:00:00+09:00">2026年07月04日</time></p></footer>
+</body>
+</html>

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ce-seminar-finder"
+version = "0.1.0"
+description = "CE Seminar Finder collection and publishing foundation"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[project.optional-dependencies]
+google = [
+  "google-api-python-client>=2.160,<3",
+  "google-auth>=2.38,<3",
+]
+pdf = [
+  "pypdf>=5.3,<7",
+]
+dev = []
+
+[project.scripts]
+ce-seminar-finder = "ce_seminar_finder.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

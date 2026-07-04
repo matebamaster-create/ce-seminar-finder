@@ -1,0 +1,128 @@
+{
+  "events": [
+    {
+      "event_id": "evt_01JPHASE100000000000000001",
+      "canonical_event_id": "evt_01JPHASE100000000000000001",
+      "publication_status": "公開",
+      "review_status": "確認済み",
+      "review_label": "あり",
+      "duplicate_status": "重複なし",
+      "fixed_values": {
+        "timezone": "Asia/Tokyo",
+        "pdf_keyword_hit": true
+      },
+      "auto_values": [
+        {
+          "field_name": "title",
+          "value": "自動抽出された仮タイトル",
+          "confidence": 0.91,
+          "extractor": "ai",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        },
+        {
+          "field_name": "organizer_name",
+          "value": "サンプル県臨床工学技士会",
+          "confidence": 0.99,
+          "extractor": "rule",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        },
+        {
+          "field_name": "format",
+          "value": "Web",
+          "confidence": 0.98,
+          "extractor": "rule",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        },
+        {
+          "field_name": "event_type",
+          "value": "セミナー",
+          "confidence": 0.95,
+          "extractor": "ai",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        },
+        {
+          "field_name": "genres",
+          "value": ["呼吸"],
+          "confidence": 0.92,
+          "extractor": "ai",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        },
+        {
+          "field_name": "event_start_at",
+          "value": "2026-08-10T13:00:00+09:00",
+          "confidence": 0.99,
+          "extractor": "rule",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        },
+        {
+          "field_name": "application_deadline_at",
+          "value": "2026-08-07T23:59:00+09:00",
+          "confidence": 0.99,
+          "extractor": "rule",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        },
+        {
+          "field_name": "fee_category",
+          "value": "有料",
+          "confidence": 0.99,
+          "extractor": "rule",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        },
+        {
+          "field_name": "fee_text",
+          "value": "会員1,000円／非会員3,000円",
+          "confidence": 0.99,
+          "extractor": "rule",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        },
+        {
+          "field_name": "primary_official_url",
+          "value": "https://example.org/events/sample",
+          "confidence": 1.0,
+          "extractor": "rule",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        },
+        {
+          "field_name": "review_reason_display",
+          "value": "単位情報は公式ページで要確認",
+          "confidence": 1.0,
+          "extractor": "rule",
+          "extracted_at": "2026-07-04T09:00:00+09:00"
+        }
+      ],
+      "overrides": [
+        {
+          "field_name": "title",
+          "value": "管理者が確認した呼吸療法Webセミナー",
+          "active": true,
+          "updated_by": "sample-admin",
+          "reason": "公式ページ表記へ修正",
+          "updated_at": "2026-07-04T10:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "event_id": "evt_01JPHASE100000000000000002",
+      "canonical_event_id": "evt_01JPHASE100000000000000002",
+      "publication_status": "確認待ち",
+      "review_status": "未確認",
+      "review_label": "あり",
+      "duplicate_status": "重複なし",
+      "fixed_values": {
+        "title": "公開されない確認待ちイベント"
+      }
+    },
+    {
+      "event_id": "evt_01JPHASE100000000000000003",
+      "canonical_event_id": "evt_01JPHASE100000000000000001",
+      "publication_status": "公開",
+      "review_status": "確認済み",
+      "review_label": "なし",
+      "duplicate_status": "統合済み",
+      "fixed_values": {
+        "title": "公開されない統合元イベント"
+      }
+    }
+  ]
+}
+

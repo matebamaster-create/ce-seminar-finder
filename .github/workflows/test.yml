@@ -1,0 +1,43 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e .
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Build sample public data
+        run: >-
+          python -m ce_seminar_finder.cli build-public
+          --input fixtures/sample-events.json
+          --output /tmp/events.json
+          --generated-at 2026-07-04T12:00:00+09:00
+      - name: Verify generated file is committed
+        run: diff -u site/data/events.json /tmp/events.json
+      - name: Build static site
+        run: >-
+          python -m ce_seminar_finder.cli build-site
+          --data /tmp/events.json
+          --output-directory /tmp/site
+      - name: Verify public site boundary
+        run: |
+          test -f /tmp/site/index.html
+          test -f /tmp/site/events/index.html
+          test -f /tmp/site/archive/index.html
+          test -f /tmp/site/about/index.html
+          ! grep -R -E 'admin_note|auto_values|FieldOverrides|ReviewQueue' /tmp/site

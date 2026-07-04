@@ -1,0 +1,127 @@
+name: Daily collection and publish
+
+on:
+  schedule:
+    - cron: "17 21 * * *"
+  workflow_dispatch:
+    inputs:
+      source_ids:
+        description: "取得するsource_id（カンマ区切り、空ならRepository Variableを使用）"
+        required: false
+        type: string
+      publish:
+        description: "Sheetsから公開サイトを再生成する"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: ce-seminar-finder-daily
+  cancel-in-progress: false
+
+jobs:
+  collect-build:
+    runs-on: ubuntu-latest
+    environment: administration
+    outputs:
+      publish_ready: ${{ steps.public-data.outputs.publish_ready }}
+    env:
+      CE_SPREADSHEET_ID: ${{ secrets.CE_SPREADSHEET_ID }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+      ENABLED_SOURCE_IDS: ${{ inputs.source_ids || vars.CE_ENABLED_SOURCE_IDS }}
+      REQUESTED_PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install runtime
+        run: python -m pip install -e '.[google,pdf]'
+      - name: Collect explicitly enabled sources
+        run: |
+          args=(
+            --enabled-sources "$ENABLED_SOURCE_IDS"
+            --summary var/daily/summary.json
+            --candidates var/daily/candidates.json
+            --markdown-summary var/daily/summary.md
+            --max-detail-pages 1
+          )
+          if [[ -n "$CE_SPREADSHEET_ID" && -n "$GOOGLE_SERVICE_ACCOUNT_JSON" ]]; then
+            args+=(--spreadsheet-id "$CE_SPREADSHEET_ID")
+          fi
+          python -m ce_seminar_finder.cli daily-run "${args[@]}"
+      - name: Add run summary
+        if: always()
+        run: |
+          if [[ -f var/daily/summary.md ]]; then
+            cat var/daily/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "日次サマリを生成できませんでした。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Archive and export approved events
+        id: public-data
+        run: |
+          echo "publish_ready=false" >> "$GITHUB_OUTPUT"
+          if [[ "$REQUESTED_PUBLISH" != "true" ]]; then
+            echo "手動実行で公開更新は選択されていません。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ -z "$CE_SPREADSHEET_ID" || -z "$GOOGLE_SERVICE_ACCOUNT_JSON" ]]; then
+            echo "Sheets接続情報がないため公開更新をスキップしました。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python -m ce_seminar_finder.cli archive-sheet \
+            --spreadsheet-id "$CE_SPREADSHEET_ID" \
+            --as-of "$now"
+          python -m ce_seminar_finder.cli export-public-from-sheet \
+            --spreadsheet-id "$CE_SPREADSHEET_ID" \
+            --output /tmp/events.json \
+            --generated-at "$now"
+          echo "publish_ready=true" >> "$GITHUB_OUTPUT"
+      - name: Build Pages artifact
+        if: steps.public-data.outputs.publish_ready == 'true'
+        run: |
+          mkdir -p public/assets public/data
+          cp -R site/assets/. public/assets/
+          cp /tmp/events.json public/data/events.json
+          python -m ce_seminar_finder.cli build-site \
+            --data public/data/events.json \
+            --output-directory public
+          ! grep -R -E 'admin_note|auto_values|FieldOverrides|ReviewQueue' public
+      - name: Configure Pages
+        if: steps.public-data.outputs.publish_ready == 'true'
+        uses: actions/configure-pages@v5
+      - name: Upload Pages artifact
+        if: steps.public-data.outputs.publish_ready == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - name: Upload private run diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-diagnostics-${{ github.run_id }}
+          path: |
+            var/daily/summary.json
+            var/daily/summary.md
+          if-no-files-found: warn
+          retention-days: 14
+
+  deploy:
+    if: needs.collect-build.outputs.publish_ready == 'true'
+    needs: collect-build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

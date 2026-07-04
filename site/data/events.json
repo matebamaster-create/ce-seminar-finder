@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-04T12:00:00+09:00",
+  "event_count": 1,
+  "events": [
+    {
+      "event_id": "evt_01JPHASE100000000000000001",
+      "detail_path": "/events/evt_01JPHASE100000000000000001/",
+      "review_label": "あり",
+      "title": "管理者が確認した呼吸療法Webセミナー",
+      "event_type": "セミナー",
+      "genres": [
+        "呼吸"
+      ],
+      "organizer_name": "サンプル県臨床工学技士会",
+      "format": "Web",
+      "event_start_at": "2026-08-10T13:00:00+09:00",
+      "application_deadline_at": "2026-08-07T23:59:00+09:00",
+      "timezone": "Asia/Tokyo",
+      "fee_category": "有料",
+      "fee_text": "会員1,000円／非会員3,000円",
+      "primary_official_url": "https://example.org/events/sample",
+      "pdf_keyword_hit": true,
+      "review_reason_display": "単位情報は公式ページで要確認"
+    }
+  ]
+}
