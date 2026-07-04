@@ -39,11 +39,11 @@
 2. Google Cloud側でSheets APIを利用できるサービスアカウントを用意します。
 3. サービスアカウントの`client_email`を、空のスプレッドシートへ編集者として共有します。
 4. スプレッドシートURLの`/d/`と`/edit`の間にあるIDを控えます。
-5. サービスアカウントJSONをGitHubへファイルとしてコミットしないでください。
+5. GitHub ActionsはWorkload Identity Federation（OIDC）で認証し、秘密鍵を作成しません。
 
 ## GitHub Actionsから初期化する場合
 
-1. GitHubリポジトリのSecret `GOOGLE_SERVICE_ACCOUNT_JSON`へ、サービスアカウントJSONの内容全体を登録します。
+1. GitHubリポジトリのVariablesへ`GCP_WORKLOAD_IDENTITY_PROVIDER`と`GCP_SERVICE_ACCOUNT`を登録します。
 2. Actionsの「Initialize Google Sheet」を開きます。
 3. `spreadsheet_id`へ対象IDを入力して実行します。
 4. 実行完了後、13シート、ヘッダー、プルダウン、色分け、Sources初期値を確認します。
@@ -60,7 +60,7 @@ source .venv/bin/activate
 python -m pip install -e '.[google]'
 ```
 
-認証ファイルは`.gitignore`対象の名前でワークスペース外または安全な場所に置き、環境変数で指定します。
+ローカル実行時だけ認証ファイルを使う場合は、`.gitignore`対象の名前でワークスペース外または安全な場所に置き、環境変数で指定します。
 
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS="/安全な場所/service-account.json"

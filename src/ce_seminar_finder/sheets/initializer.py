@@ -49,6 +49,7 @@ def build_plan() -> InitializationPlan:
 
 def load_google_service(credentials_json: str | None = None) -> Any:
     try:
+        from google.auth import default as default_credentials
         from google.oauth2.service_account import Credentials
         from googleapiclient.discovery import build
     except ImportError as exc:
@@ -70,9 +71,7 @@ def load_google_service(credentials_json: str | None = None) -> Any:
             scopes=scopes,
         )
     else:
-        raise RuntimeError(
-            "GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS is required"
-        )
+        credentials, _ = default_credentials(scopes=scopes)
     return build("sheets", "v4", credentials=credentials, cache_discovery=False)
 
 
