@@ -28,6 +28,7 @@ from .sheets.reader import (
     read_event_rows,
 )
 from .sheets.schema import workbook_template_payload
+from .sheets.writer import upsert_event_rows
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -134,6 +135,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     archive_sheet.add_argument("--spreadsheet-id", required=True)
     archive_sheet.add_argument("--as-of", required=True)
+
+    import_events = subparsers.add_parser(
+        "upsert-sheet-events",
+        help="JSONの確認済みイベントをEventsシートへ追加または更新します",
+    )
+    import_events.add_argument("--spreadsheet-id", required=True)
+    import_events.add_argument("--input", type=Path, required=True)
     return parser
 
 
@@ -365,6 +373,16 @@ def main(argv: list[str] | None = None) -> int:
             as_of=parse_datetime(args.as_of),
         )
         print(json.dumps({"archived_count": archived}, ensure_ascii=False))
+        return 0
+
+    if args.command == "upsert-sheet-events":
+        raw = json.loads(args.input.read_text(encoding="utf-8"))
+        rows = raw.get("events", []) if isinstance(raw, dict) else raw
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise ValueError("Input must be an event object array or {'events': [...]}")
+        service = load_google_service()
+        result = upsert_event_rows(service, args.spreadsheet_id, rows)
+        print(json.dumps(result, ensure_ascii=False))
         return 0
 
     raise AssertionError(f"Unhandled command: {args.command}")

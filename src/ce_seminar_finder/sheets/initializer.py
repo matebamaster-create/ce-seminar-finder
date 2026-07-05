@@ -5,7 +5,13 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from .schema import SETTINGS_ROWS, SHEET_SPECS, SOURCE_ROWS, settings_ranges
+from .schema import (
+    FIELD_GUIDE_ROWS,
+    SETTINGS_ROWS,
+    SHEET_SPECS,
+    SOURCE_ROWS,
+    settings_ranges,
+)
 
 
 HEADER_BACKGROUND = {"red": 0.03, "green": 0.50, "blue": 0.48}
@@ -133,6 +139,23 @@ def _ensure_sheets(service: Any, spreadsheet_id: str) -> set[str]:
                 }
             )
             newly_created.add(spec.title)
+        else:
+            current = next(item for item in properties if item["title"] == spec.title)
+            current_columns = current.get("gridProperties", {}).get("columnCount", 0)
+            if current_columns < len(spec.headers):
+                requests.append(
+                    {
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": current["sheetId"],
+                                "gridProperties": {
+                                    "columnCount": len(spec.headers),
+                                },
+                            },
+                            "fields": "gridProperties.columnCount",
+                        }
+                    }
+                )
 
     if requests:
         (
@@ -179,6 +202,14 @@ def _write_headers_and_settings(service: Any, spreadsheet_id: str) -> None:
                 "range": "'Sources'!A2",
                 "majorDimension": "ROWS",
                 "values": [list(row) for row in SOURCE_ROWS],
+            }
+        )
+    if _range_is_empty(service, spreadsheet_id, "'項目ガイド'!A2"):
+        data.append(
+            {
+                "range": "'項目ガイド'!A2",
+                "majorDimension": "ROWS",
+                "values": [list(row) for row in FIELD_GUIDE_ROWS],
             }
         )
     (

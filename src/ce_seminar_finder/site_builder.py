@@ -349,11 +349,10 @@ def _time(value: Any) -> str:
         parsed = _parse_datetime(str(value))
     except ValueError:
         return _e(value)
-    return (
-        f'<time datetime="{_e(str(value))}">'
-        f"{parsed.month}月{parsed.day}日 {parsed.strftime('%H:%M')}"
-        "</time>"
-    )
+    display = f"{parsed.month}月{parsed.day}日"
+    if parsed.hour or parsed.minute:
+        display += f" {parsed.strftime('%H:%M')}"
+    return f'<time datetime="{_e(str(value))}">{display}</time>'
 
 
 def _time_text(value: Any) -> str:
@@ -363,7 +362,10 @@ def _time_text(value: Any) -> str:
         parsed = _parse_datetime(str(value))
     except ValueError:
         return str(value)
-    return f"{parsed.month}月{parsed.day}日 {parsed.strftime('%H:%M')}"
+    display = f"{parsed.month}月{parsed.day}日"
+    if parsed.hour or parsed.minute:
+        display += f" {parsed.strftime('%H:%M')}"
+    return display
 
 
 def _event_sort_key(event: dict[str, Any]) -> tuple[str, str]:

@@ -14,6 +14,11 @@ on:
         required: true
         default: false
         type: boolean
+      sync_current_events:
+        description: "リポジトリの確認済みイベント6件をEventsへ同期する"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -68,6 +73,14 @@ jobs:
           else
             echo "日次サマリを生成できませんでした。" >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Initialize Japanese guide and sync reviewed events
+        if: github.event_name == 'workflow_dispatch' && inputs.sync_current_events
+        run: |
+          python -m ce_seminar_finder.cli init-sheet \
+            --spreadsheet-id "$CE_SPREADSHEET_ID"
+          python -m ce_seminar_finder.cli upsert-sheet-events \
+            --spreadsheet-id "$CE_SPREADSHEET_ID" \
+            --input data/current-events-20260706.json
       - name: Archive and export approved events
         id: public-data
         run: |

@@ -30,13 +30,14 @@ EXPECTED_SHEETS = (
     "AutomationRules",
     "FetchLogs",
     "Settings",
+    "項目ガイド",
 )
 
 
 class SheetSchemaTest(unittest.TestCase):
-    def test_has_exactly_thirteen_required_sheets(self) -> None:
+    def test_has_exactly_fourteen_required_sheets(self) -> None:
         self.assertEqual(EXPECTED_SHEETS, tuple(spec.title for spec in SHEET_SPECS))
-        self.assertEqual(13, len(SHEET_SPECS))
+        self.assertEqual(14, len(SHEET_SPECS))
 
     def test_headers_are_unique(self) -> None:
         for spec in SHEET_SPECS:
@@ -65,7 +66,7 @@ class SheetSchemaTest(unittest.TestCase):
 
     def test_plan_counts_schema(self) -> None:
         plan = build_plan()
-        self.assertEqual(13, len(plan.sheet_titles))
+        self.assertEqual(14, len(plan.sheet_titles))
         self.assertGreater(plan.settings_row_count, 40)
         self.assertGreater(plan.dropdown_count, 10)
 
@@ -94,9 +95,10 @@ class SheetSchemaTest(unittest.TestCase):
 
     def test_workbook_template_payload_is_complete(self) -> None:
         payload = workbook_template_payload()
-        self.assertEqual(13, len(payload["sheets"]))
+        self.assertEqual(14, len(payload["sheets"]))
         self.assertEqual(84, len(payload["settings_rows"]))
         self.assertEqual(9, len(payload["source_rows"]))
+        self.assertGreater(len(payload["field_guide_rows"]), 50)
 
 
 if __name__ == "__main__":
