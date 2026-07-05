@@ -59,15 +59,9 @@ def load_google_service(credentials_json: str | None = None) -> Any:
 
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     raw = credentials_json or os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if raw:
         credentials = Credentials.from_service_account_info(
             json.loads(raw),
-            scopes=scopes,
-        )
-    elif credentials_path:
-        credentials = Credentials.from_service_account_file(
-            credentials_path,
             scopes=scopes,
         )
     else:
