@@ -76,6 +76,29 @@ Phase 1〜6の実装が完了しています。外部アカウント設定後に
 - Sheetsの終了イベント自動アーカイブと公開JSON出力
 - GitHub Pagesへの条件付き配布
 - GASから選択したSourceだけを手動取得
+
+## 管理画面
+
+`gas/Code.gs`と`gas/Index.html`を管理スプレッドシートに紐づく
+Google Apps Scriptへ配置し、ウェブアプリとしてデプロイすると、
+スプレッドシートを直接操作せずに次を行えます。
+
+- 公開中・確認待ち・要確認件数の確認
+- イベント内容と公開状態の編集
+- 公開前のカード表示プレビュー
+- ReviewQueueの公開・要確認付き公開・非公開判断
+- 取得元サイトの状態確認と手動取得
+- GitHub Pages公開更新の依頼
+- 九州から全国へ拡張する地域ロードマップの確認
+
+Script Propertiesには必要に応じて次を設定します。
+
+- `SPREADSHEET_ID`: スタンドアロンGASの場合の管理シートID
+- `ADMIN_EMAILS`: 管理画面を利用できるGoogleアカウント（カンマ区切り）
+- `GITHUB_OWNER`
+- `GITHUB_REPOSITORY`
+- `GITHUB_TOKEN`
+- `GITHUB_REF`（省略時は`main`）
 - GitHub Actionsによるテストとシート初期化
 - 76件の自動テスト
 - 13シートを収録した検証済み管理用Excel雛形
