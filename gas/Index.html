@@ -65,6 +65,7 @@
       background: var(--primary); color: #fff; font-weight: 700;
     }
     .button:hover { background: var(--primary-dark); }
+    .button:disabled { cursor: not-allowed; opacity: .58; background: #6f8791; border-color: #6f8791; }
     .button.secondary { background: #fff; color: var(--primary-dark); }
     .button.danger { border-color: var(--danger); background: var(--danger); }
     .button.small { padding: 7px 10px; font-size: 13px; }
@@ -369,6 +370,14 @@
 
     function renderAll() {
       document.getElementById("actor").textContent = state.data.actor + " ／ " + formatDate(state.data.generated_at);
+      const publishButton = document.getElementById("publish-button");
+      publishButton.disabled = !state.data.connections.github_actions;
+      publishButton.textContent = state.data.connections.github_actions
+        ? "公開ページを更新"
+        : "公開更新（GitHub接続待ち）";
+      publishButton.title = state.data.connections.github_actions
+        ? ""
+        : "GitHub操作用トークンを設定すると有効になります。";
       renderStats();
       fillFilters();
       renderEvents();
