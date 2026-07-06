@@ -167,7 +167,8 @@ def _event_card(
     archive: bool = False,
     route_prefix: str,
 ) -> str:
-    genres = event.get("genres") or []
+    genres = _list_values(event.get("genres"))
+    detailed_tags = _list_values(event.get("detailed_tags"))
     search_values = [
         event.get("title", ""),
         event.get("organizer_name", ""),
@@ -179,7 +180,7 @@ def _event_card(
         event.get("audience_conditions", ""),
         event.get("credits_text", ""),
         *genres,
-        *(event.get("detailed_tags") or []),
+        *detailed_tags,
     ]
     tags = "".join(f'<span class="tag">{_e(value)}</span>' for value in genres[:3])
     review = (
@@ -222,7 +223,8 @@ def _event_card(
 
 def _detail_page(event: dict[str, Any], generated_at: datetime) -> str:
     genres = "".join(
-        f'<span class="tag">{_e(value)}</span>' for value in event.get("genres", [])
+        f'<span class="tag">{_e(value)}</span>'
+        for value in _list_values(event.get("genres"))
     )
     application = (
         f'<a class="secondary-button" href="{_e(event["application_url"])}" target="_blank" rel="noopener" aria-label="申込ページへ（新しいタブ）">申込ページへ</a>'
@@ -270,6 +272,14 @@ def _detail_page(event: dict[str, Any], generated_at: datetime) -> str:
         script=False,
         asset_prefix="../../",
     )
+
+
+def _list_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [item.strip() for item in value.splitlines() if item.strip()]
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
 
 
 def _about_page(generated_at: datetime) -> str:
