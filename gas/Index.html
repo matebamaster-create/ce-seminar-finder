@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    :root {
+      --ink: #17324d;
+      --muted: #637689;
+      --line: #dce6eb;
+      --surface: #ffffff;
+      --canvas: #f4f8fa;
+      --primary: #008f87;
+      --primary-dark: #006e69;
+      --primary-soft: #e2f6f3;
+      --warning: #a85a11;
+      --warning-soft: #fff3df;
+      --danger: #b33838;
+      --danger-soft: #fff0f0;
+      --shadow: 0 16px 38px rgba(24, 57, 77, .09);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    a { color: var(--primary-dark); }
+    .shell { min-height: 100vh; display: grid; grid-template-columns: 232px 1fr; }
+    .sidebar {
+      background: #123c4c;
+      color: #fff;
+      padding: 26px 18px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .brand { display: flex; gap: 11px; align-items: center; margin: 0 7px 30px; }
+    .brand-mark {
+      display: grid; place-items: center; width: 43px; height: 43px;
+      border-radius: 13px; background: var(--primary); font-weight: 800;
+    }
+    .brand strong { display: block; font-size: 15px; }
+    .brand small { opacity: .72; }
+    nav { display: grid; gap: 7px; }
+    .nav-button {
+      width: 100%; border: 0; border-radius: 11px; padding: 12px 14px;
+      text-align: left; background: transparent; color: #d9e7eb; font-weight: 650;
+    }
+    .nav-button:hover, .nav-button.active { background: rgba(255,255,255,.13); color: #fff; }
+    .main { min-width: 0; }
+    .topbar {
+      min-height: 76px; background: rgba(255,255,255,.94); border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between; gap: 18px;
+      padding: 14px 28px; position: sticky; top: 0; z-index: 8; backdrop-filter: blur(10px);
+    }
+    .topbar h1 { margin: 0; font-size: 21px; }
+    .topbar p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .actions { display: flex; gap: 10px; align-items: center; }
+    .button {
+      border: 1px solid var(--primary); border-radius: 10px; padding: 10px 15px;
+      background: var(--primary); color: #fff; font-weight: 700;
+    }
+    .button:hover { background: var(--primary-dark); }
+    .button.secondary { background: #fff; color: var(--primary-dark); }
+    .button.danger { border-color: var(--danger); background: var(--danger); }
+    .button.small { padding: 7px 10px; font-size: 13px; }
+    .content { padding: 26px 28px 50px; }
+    .view { display: none; }
+    .view.active { display: block; }
+    .stats { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 14px; }
+    .stat, .panel {
+      background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow);
+    }
+    .stat { padding: 19px; }
+    .stat small { color: var(--muted); font-weight: 650; }
+    .stat strong { display: block; font-size: 30px; margin-top: 8px; }
+    .panel { margin-top: 20px; padding: 21px; }
+    .panel-head, .toolbar {
+      display: flex; justify-content: space-between; gap: 16px; align-items: center; flex-wrap: wrap;
+    }
+    .panel h2 { margin: 0; font-size: 18px; }
+    .panel-sub { color: var(--muted); margin: 6px 0 0; font-size: 13px; }
+    .toolbar input, .toolbar select {
+      border: 1px solid #c9d8df; background: #fff; border-radius: 9px; padding: 9px 11px;
+    }
+    .table-wrap { overflow: auto; margin-top: 16px; }
+    table { width: 100%; border-collapse: collapse; min-width: 850px; }
+    th, td { padding: 11px 10px; text-align: left; border-bottom: 1px solid #e7eef1; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; letter-spacing: .03em; }
+    td { font-size: 14px; }
+    .title-cell { min-width: 270px; font-weight: 700; }
+    .badge {
+      display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px;
+      background: #edf2f5; color: #425a69; font-size: 12px; font-weight: 750; white-space: nowrap;
+    }
+    .badge.published, .badge.active { background: var(--primary-soft); color: var(--primary-dark); }
+    .badge.pending, .badge.warning { background: var(--warning-soft); color: var(--warning); }
+    .badge.error { background: var(--danger-soft); color: var(--danger); }
+    .review-list { display: grid; gap: 13px; margin-top: 16px; }
+    .review-card {
+      border: 1px solid var(--line); border-radius: 13px; padding: 16px;
+      display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: start;
+    }
+    .review-card h3 { margin: 7px 0; font-size: 16px; }
+    .review-card p { margin: 5px 0; color: var(--muted); font-size: 13px; }
+    .review-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+    .roadmap { display: grid; gap: 12px; margin-top: 18px; }
+    .region {
+      display: grid; grid-template-columns: 38px 140px 1fr 90px; gap: 13px; align-items: center;
+      padding: 15px; border: 1px solid var(--line); border-radius: 13px;
+    }
+    .region-number {
+      display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+      background: var(--primary-soft); color: var(--primary-dark); font-weight: 800;
+    }
+    .loading {
+      position: fixed; inset: 0; z-index: 30; display: grid; place-items: center;
+      background: rgba(244,248,250,.82); backdrop-filter: blur(3px);
+    }
+    .loading[hidden] { display: none; }
+    .spinner {
+      width: 42px; height: 42px; border: 4px solid #cfe2e5; border-top-color: var(--primary);
+      border-radius: 50%; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .modal {
+      position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
+      background: rgba(9,34,47,.54); padding: 18px;
+    }
+    .modal[hidden] { display: none; }
+    .modal-card {
+      width: min(1040px, 100%); max-height: 94vh; overflow: auto;
+      background: #fff; border-radius: 18px; box-shadow: 0 30px 90px rgba(0,0,0,.23);
+    }
+    .modal-head {
+      position: sticky; top: 0; z-index: 2; background: #fff; border-bottom: 1px solid var(--line);
+      padding: 18px 21px; display: flex; justify-content: space-between; align-items: center;
+    }
+    .modal-head h2 { margin: 0; font-size: 19px; }
+    .icon-button { border: 0; background: #edf3f5; border-radius: 50%; width: 36px; height: 36px; }
+    .editor-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(290px, .75fr); }
+    .form { padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    label { display: grid; gap: 6px; color: #405868; font-size: 13px; font-weight: 700; }
+    label.full { grid-column: 1 / -1; }
+    input, select, textarea {
+      width: 100%; border: 1px solid #cbd9df; border-radius: 9px; padding: 9px 10px;
+      background: #fff; color: var(--ink);
+    }
+    textarea { min-height: 76px; resize: vertical; }
+    .preview { border-left: 1px solid var(--line); background: #f8fbfc; padding: 20px; }
+    .preview-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 17px; }
+    .preview-card h3 { font-size: 17px; margin: 12px 0; }
+    .preview-card dl { display: grid; gap: 7px; }
+    .preview-card dl div { display: grid; grid-template-columns: 62px 1fr; }
+    .preview-card dt { color: var(--muted); }
+    .modal-actions {
+      position: sticky; bottom: 0; background: #fff; border-top: 1px solid var(--line);
+      padding: 15px 20px; display: flex; justify-content: flex-end; gap: 9px;
+    }
+    .toast {
+      position: fixed; right: 22px; bottom: 22px; z-index: 40; max-width: 420px;
+      padding: 13px 16px; border-radius: 11px; background: #123c4c; color: #fff; box-shadow: var(--shadow);
+    }
+    .toast.error { background: var(--danger); }
+    .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { height: auto; position: static; padding: 14px; }
+      .brand { margin-bottom: 12px; }
+      nav { grid-template-columns: repeat(5, 1fr); }
+      .nav-button { text-align: center; padding: 9px 5px; font-size: 12px; }
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .editor-layout { grid-template-columns: 1fr; }
+      .preview { border-left: 0; border-top: 1px solid var(--line); }
+    }
+    @media (max-width: 620px) {
+      .topbar, .content { padding-left: 15px; padding-right: 15px; }
+      .topbar { align-items: flex-start; }
+      .actions { flex-direction: column; align-items: stretch; }
+      .stats { grid-template-columns: 1fr 1fr; }
+      .form { grid-template-columns: 1fr; }
+      label.full { grid-column: auto; }
+      .region { grid-template-columns: 38px 1fr; }
+      .region span:nth-child(3), .region span:nth-child(4) { grid-column: 2; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">CE</span>
+        <span><strong>Seminar Finder</strong><small>管理コンソール</small></span>
+      </div>
+      <nav>
+        <button class="nav-button active" data-view="dashboard">ダッシュボード</button>
+        <button class="nav-button" data-view="events">イベント</button>
+        <button class="nav-button" data-view="reviews">要確認</button>
+        <button class="nav-button" data-view="sources">取得元</button>
+        <button class="nav-button" data-view="rollout">全国展開</button>
+      </nav>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">ダッシュボード</h1>
+          <p id="actor">管理データを読み込んでいます</p>
+        </div>
+        <div class="actions">
+          <a class="button secondary" href="https://matebamaster-create.github.io/ce-seminar-finder/events/" target="_blank" rel="noopener">公開ページを見る</a>
+          <button class="button" id="publish-button">公開ページを更新</button>
+        </div>
+      </header>
+      <div class="content">
+        <section class="view active" id="view-dashboard">
+          <div class="stats" id="stats"></div>
+          <div class="panel">
+            <div class="panel-head">
+              <div><h2>優先して確認する項目</h2><p class="panel-sub">締切や開催日が近い順に確認します。</p></div>
+              <button class="button secondary small" data-go="reviews">すべて見る</button>
+            </div>
+            <div class="review-list" id="dashboard-reviews"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <div><h2>近日開催イベント</h2><p class="panel-sub">公開状態と不足項目を一覧できます。</p></div>
+              <button class="button secondary small" data-go="events">すべて見る</button>
+            </div>
+            <div class="table-wrap"><table><thead><tr><th>イベント</th><th>開催</th><th>地域</th><th>公開</th><th>確認</th><th></th></tr></thead><tbody id="dashboard-events"></tbody></table></div>
+          </div>
+        </section>
+        <section class="view" id="view-events">
+          <div class="panel" style="margin-top:0">
+            <div class="panel-head">
+              <div><h2>イベント管理</h2><p class="panel-sub">公開内容を確認・修正します。</p></div>
+              <div class="toolbar">
+                <input id="event-search" type="search" placeholder="イベント名・主催者">
+                <select id="event-status"><option value="">すべての公開状態</option></select>
+                <select id="event-prefecture"><option value="">すべての地域</option></select>
+              </div>
+            </div>
+            <div class="table-wrap"><table><thead><tr><th>イベント</th><th>開催</th><th>形式</th><th>情報元</th><th>公開</th><th>要確認</th><th></th></tr></thead><tbody id="events-body"></tbody></table></div>
+            <p class="empty" id="events-empty" hidden>条件に合うイベントがありません。</p>
+          </div>
+        </section>
+        <section class="view" id="view-reviews">
+          <div class="panel" style="margin-top:0">
+            <div class="panel-head"><div><h2>要確認キュー</h2><p class="panel-sub">公開前に人の確認が必要な項目です。</p></div></div>
+            <div class="review-list" id="reviews-list"></div>
+          </div>
+        </section>
+        <section class="view" id="view-sources">
+          <div class="panel" style="margin-top:0">
+            <div class="panel-head"><div><h2>取得元サイト</h2><p class="panel-sub">各技士会サイトの稼働状態です。</p></div></div>
+            <div class="table-wrap"><table><thead><tr><th>地域</th><th>団体</th><th>稼働</th><th>最終成功</th><th>失敗</th><th></th></tr></thead><tbody id="sources-body"></tbody></table></div>
+          </div>
+        </section>
+        <section class="view" id="view-rollout">
+          <div class="panel" style="margin-top:0">
+            <div class="panel-head"><div><h2>全国展開ロードマップ</h2><p class="panel-sub">九州から北上し、検証済みの地域から公開します。</p></div></div>
+            <div class="roadmap" id="roadmap"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="loading" id="loading"><div class="spinner" aria-label="読み込み中"></div></div>
+  <div class="modal" id="editor-modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head"><h2>イベントを確認・編集</h2><button class="icon-button" id="close-modal" aria-label="閉じる">×</button></div>
+      <div class="editor-layout">
+        <form class="form" id="event-form">
+          <input type="hidden" name="event_id">
+          <input type="hidden" name="last_admin_updated_at">
+          <label class="full">イベント名<input name="title" required></label>
+          <label>公開状態<select name="publication_status"></select></label>
+          <label>確認状態<select name="review_status"><option>未確認</option><option>確認済み</option><option>要修正</option></select></label>
+          <label>要確認表示<select name="review_label"></select></label>
+          <label>イベント種別<select name="event_type"></select></label>
+          <label>開催形式<select name="format"></select></label>
+          <label>参加費区分<select name="fee_category"></select></label>
+          <label>主催区分<select name="organizer_type"></select></label>
+          <label>情報元の都道府県<input name="source_prefecture"></label>
+          <label class="full">ジャンル（複数は改行）<textarea name="genres"></textarea></label>
+          <label class="full">詳細タグ（複数は改行）<textarea name="detailed_tags"></textarea></label>
+          <label class="full">概要<textarea name="summary"></textarea></label>
+          <label class="full">主催者<input name="organizer_name"></label>
+          <label>開催地<input name="venue_prefecture"></label>
+          <label>会場名<input name="venue_name"></label>
+          <label>開催開始<input name="event_start_at"></label>
+          <label>開催終了<input name="event_end_at"></label>
+          <label>配信開始<input name="stream_start_at"></label>
+          <label>配信終了<input name="stream_end_at"></label>
+          <label>申込締切<input name="application_deadline_at"></label>
+          <label>実質終了<input name="effective_end_at"></label>
+          <label class="full">参加費表示<textarea name="fee_text"></textarea></label>
+          <label class="full">対象・参加条件<textarea name="audience_conditions"></textarea></label>
+          <label>定員<input name="capacity_text"></label>
+          <label>単位・ポイント<input name="credits_text"></label>
+          <label class="full">要確認の説明<textarea name="review_reason_display"></textarea></label>
+          <label class="full">公式詳細URL<input name="primary_official_url" type="url"></label>
+          <label class="full">申込URL<input name="application_url" type="url"></label>
+          <label class="full">公式PDF URL<input name="primary_pdf_url" type="url"></label>
+          <label class="full">管理メモ<textarea name="admin_note"></textarea></label>
+        </form>
+        <aside class="preview">
+          <p class="panel-sub">公開イメージ</p>
+          <div class="preview-card">
+            <div id="preview-tags"></div>
+            <h3 id="preview-title"></h3>
+            <dl>
+              <div><dt>開催</dt><dd id="preview-date"></dd></div>
+              <div><dt>締切</dt><dd id="preview-deadline"></dd></div>
+              <div><dt>参加費</dt><dd id="preview-fee"></dd></div>
+            </dl>
+            <p id="preview-organizer"></p>
+          </div>
+        </aside>
+      </div>
+      <div class="modal-actions">
+        <button class="button secondary" id="cancel-edit">キャンセル</button>
+        <button class="button" id="save-event">保存する</button>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="toast" hidden></div>
+
+  <script>
+    const state = { data: null, activeEvent: null };
+    const titles = { dashboard: "ダッシュボード", events: "イベント管理", reviews: "要確認キュー", sources: "取得元サイト", rollout: "全国展開" };
+    const editableFields = [
+      "publication_status","review_status","review_label","review_reason_display","title","summary",
+      "event_type","genres","detailed_tags","organizer_name","organizer_type","source_prefecture",
+      "venue_prefecture","venue_name","format","audience_conditions","capacity_text","credits_text",
+      "event_start_at","event_end_at","stream_start_at","stream_end_at","application_deadline_at",
+      "effective_end_at","fee_category","fee_text","primary_official_url","application_url",
+      "primary_pdf_url","admin_note"
+    ];
+
+    document.querySelectorAll(".nav-button").forEach(button => button.addEventListener("click", () => showView(button.dataset.view)));
+    document.querySelectorAll("[data-go]").forEach(button => button.addEventListener("click", () => showView(button.dataset.go)));
+    document.getElementById("event-search").addEventListener("input", renderEvents);
+    document.getElementById("event-status").addEventListener("change", renderEvents);
+    document.getElementById("event-prefecture").addEventListener("change", renderEvents);
+    document.getElementById("publish-button").addEventListener("click", publishSite);
+    document.getElementById("close-modal").addEventListener("click", closeEditor);
+    document.getElementById("cancel-edit").addEventListener("click", closeEditor);
+    document.getElementById("save-event").addEventListener("click", saveEvent);
+    document.getElementById("event-form").addEventListener("input", renderPreview);
+
+    function showView(name) {
+      document.querySelectorAll(".view").forEach(view => view.classList.toggle("active", view.id === "view-" + name));
+      document.querySelectorAll(".nav-button").forEach(button => button.classList.toggle("active", button.dataset.view === name));
+      document.getElementById("page-title").textContent = titles[name] || "管理";
+    }
+
+    function loadData() {
+      setLoading(true);
+      google.script.run
+        .withSuccessHandler(data => { state.data = data; renderAll(); setLoading(false); })
+        .withFailureHandler(handleError)
+        .getAdminDashboard();
+    }
+
+    function renderAll() {
+      document.getElementById("actor").textContent = state.data.actor + " ／ " + formatDate(state.data.generated_at);
+      renderStats();
+      fillFilters();
+      renderEvents();
+      renderDashboardEvents();
+      renderReviews();
+      renderSources();
+      renderRoadmap();
+    }
+
+    function renderStats() {
+      const values = [
+        ["登録イベント", state.data.stats.total],
+        ["公開中", state.data.stats.published],
+        ["公開待ち", state.data.stats.pending],
+        ["要確認", state.data.stats.review],
+        ["取得エラー", state.data.stats.source_errors],
+      ];
+      const root = document.getElementById("stats");
+      root.replaceChildren(...values.map(([label, value]) => {
+        const card = el("div", "stat");
+        card.append(el("small", "", label), el("strong", "", String(value)));
+        return card;
+      }));
+    }
+
+    function fillFilters() {
+      fillSelect(document.getElementById("event-status"), state.data.options.publication_statuses, true);
+      const prefectures = [...new Set(state.data.events.map(event => event.source_prefecture).filter(Boolean))].sort();
+      fillSelect(document.getElementById("event-prefecture"), prefectures, true);
+      const form = document.getElementById("event-form");
+      fillSelect(form.elements.publication_status, state.data.options.publication_statuses);
+      fillSelect(form.elements.review_label, state.data.options.review_labels);
+      fillSelect(form.elements.event_type, state.data.options.event_types);
+      fillSelect(form.elements.format, state.data.options.formats);
+      fillSelect(form.elements.fee_category, state.data.options.fee_categories);
+      fillSelect(form.elements.organizer_type, state.data.options.organizer_types);
+    }
+
+    function fillSelect(select, values, preserveFirst = false) {
+      const first = preserveFirst ? select.options[0] : null;
+      select.replaceChildren();
+      if (first) select.append(first);
+      values.forEach(value => {
+        const option = document.createElement("option");
+        option.value = value; option.textContent = value; select.append(option);
+      });
+    }
+
+    function eventRow(event, dashboard = false) {
+      const tr = document.createElement("tr");
+      const fields = dashboard
+        ? [
+            titleCell(event),
+            textCell(shortDate(event.event_start_at || event.stream_start_at)),
+            textCell(event.source_prefecture || "—"),
+            badgeCell(event.publication_status),
+            badgeCell(event.review_label === "あり" ? "要確認" : "確認済み"),
+          ]
+        : [
+            titleCell(event),
+            textCell(shortDate(event.event_start_at || event.stream_start_at)),
+            textCell(event.format || "要確認"),
+            textCell(event.source_prefecture || "—"),
+            badgeCell(event.publication_status),
+            badgeCell(event.review_label === "あり" ? "あり" : "なし"),
+          ];
+      fields.forEach(td => tr.append(td));
+      const action = document.createElement("td");
+      const button = el("button", "button secondary small", "確認・編集");
+      button.addEventListener("click", () => openEditor(event.event_id));
+      action.append(button); tr.append(action);
+      return tr;
+    }
+
+    function renderDashboardEvents() {
+      const root = document.getElementById("dashboard-events");
+      root.replaceChildren(...state.data.events.filter(event => event.publication_status !== "アーカイブ").slice(0, 7).map(event => eventRow(event, true)));
+    }
+
+    function renderEvents() {
+      if (!state.data) return;
+      const query = document.getElementById("event-search").value.trim().toLowerCase();
+      const status = document.getElementById("event-status").value;
+      const prefecture = document.getElementById("event-prefecture").value;
+      const rows = state.data.events.filter(event => {
+        const haystack = [event.title,event.organizer_name,event.genres,event.source_prefecture].join(" ").toLowerCase();
+        return (!query || haystack.includes(query)) && (!status || event.publication_status === status) && (!prefecture || event.source_prefecture === prefecture);
+      });
+      document.getElementById("events-body").replaceChildren(...rows.map(event => eventRow(event)));
+      document.getElementById("events-empty").hidden = rows.length > 0;
+    }
+
+    function renderReviews() {
+      const reviewCards = state.data.reviews.map(review => reviewCard(review));
+      const dashboardCards = state.data.reviews.slice(0, 4).map(review => reviewCard(review));
+      document.getElementById("reviews-list").replaceChildren(...(reviewCards.length ? reviewCards : [el("p", "empty", "現在、要確認項目はありません。")]));
+      document.getElementById("dashboard-reviews").replaceChildren(...(dashboardCards.length ? dashboardCards : [el("p", "empty", "現在、要確認項目はありません。")]));
+    }
+
+    function reviewCard(review) {
+      const card = el("article", "review-card");
+      const body = document.createElement("div");
+      body.append(badge(review.priority, review.priority === "緊急" ? "error" : "warning"));
+      body.append(el("h3", "", review.event_title));
+      body.append(el("p", "", review.reason_codes || review.uncertain_fields || "詳細を確認してください。"));
+      if (review.source_excerpt) body.append(el("p", "", review.source_excerpt));
+      const actions = el("div", "review-actions");
+      const edit = el("button", "button secondary small", "内容を確認");
+      edit.addEventListener("click", () => openEditor(review.event_id));
+      const publish = el("button", "button small", "公開");
+      publish.addEventListener("click", () => decideReview(review.review_id, "公開"));
+      const warning = el("button", "button secondary small", "要確認付き公開");
+      warning.addEventListener("click", () => decideReview(review.review_id, "要確認付き公開"));
+      const reject = el("button", "button danger small", "非公開");
+      reject.addEventListener("click", () => decideReview(review.review_id, "非公開"));
+      actions.append(edit, publish, warning, reject); card.append(body, actions);
+      return card;
+    }
+
+    function renderSources() {
+      const root = document.getElementById("sources-body");
+      root.replaceChildren(...state.data.sources.map(source => {
+        const tr = document.createElement("tr");
+        tr.append(textCell(source.prefecture), titleCell({ title: source.organization_name, organizer_name: source.base_url }));
+        tr.append(badgeCell(source.enabled ? "稼働中" : "停止中"));
+        tr.append(textCell(shortDate(source.last_success_at)));
+        tr.append(badgeCell(source.consecutive_failures ? source.consecutive_failures + "回" : "なし"));
+        const action = document.createElement("td");
+        const button = el("button", "button secondary small", "今すぐ取得");
+        button.addEventListener("click", () => requestSource(source.source_id));
+        action.append(button); tr.append(action); return tr;
+      }));
+    }
+
+    function renderRoadmap() {
+      document.getElementById("roadmap").replaceChildren(...state.data.rollout.map((region, index) => {
+        const row = el("div", "region");
+        row.append(el("span", "region-number", String(index + 1)), el("strong", "", region.name), el("span", "", region.prefectures), badge(region.status, region.status === "運用中" ? "active" : region.status === "次に対応" ? "warning" : ""));
+        return row;
+      }));
+    }
+
+    function openEditor(eventId) {
+      const event = state.data.events.find(item => item.event_id === eventId);
+      if (!event) return showToast("イベントが見つかりません。", true);
+      state.activeEvent = event;
+      const form = document.getElementById("event-form");
+      [...form.elements].forEach(input => { if (input.name) input.value = event[input.name] || ""; });
+      document.getElementById("editor-modal").hidden = false;
+      renderPreview();
+    }
+
+    function closeEditor(event) {
+      if (event) event.preventDefault();
+      document.getElementById("editor-modal").hidden = true;
+      state.activeEvent = null;
+    }
+
+    function renderPreview() {
+      const form = document.getElementById("event-form");
+      const value = name => form.elements[name]?.value || "";
+      const tags = value("genres").split(/\n|,/).map(item => item.trim()).filter(Boolean);
+      document.getElementById("preview-tags").replaceChildren(badge(value("format") || "要確認", "active"), ...tags.slice(0, 3).map(tag => badge(tag)));
+      document.getElementById("preview-title").textContent = value("title") || "イベント名";
+      document.getElementById("preview-date").textContent = shortDate(value("event_start_at")) || "要確認";
+      document.getElementById("preview-deadline").textContent = shortDate(value("application_deadline_at")) || "要確認";
+      document.getElementById("preview-fee").textContent = value("fee_text") || value("fee_category") || "要確認";
+      document.getElementById("preview-organizer").textContent = "主催：" + (value("organizer_name") || "要確認");
+    }
+
+    function saveEvent() {
+      const form = document.getElementById("event-form");
+      if (!form.reportValidity()) return;
+      const values = {};
+      editableFields.forEach(field => values[field] = form.elements[field]?.value || "");
+      setLoading(true);
+      google.script.run
+        .withSuccessHandler(result => { closeEditor(); showToast(result.message); loadData(); })
+        .withFailureHandler(handleError)
+        .saveAdminEvent({
+          event_id: form.elements.event_id.value,
+          expected_updated_at: form.elements.last_admin_updated_at.value,
+          values,
+          note: "管理画面から内容を更新",
+        });
+    }
+
+    function decideReview(reviewId, decision) {
+      if (!confirm("「" + decision + "」として確定しますか？")) return;
+      setLoading(true);
+      google.script.run
+        .withSuccessHandler(result => { showToast(result.message); loadData(); })
+        .withFailureHandler(handleError)
+        .decideReviewFromAdmin({ review_id: reviewId, decision, note: "管理画面から判断" });
+    }
+
+    function requestSource(sourceId) {
+      setLoading(true);
+      google.script.run
+        .withSuccessHandler(result => { setLoading(false); showToast(result.message); })
+        .withFailureHandler(handleError)
+        .requestSourceUpdateFromAdmin(sourceId);
+    }
+
+    function publishSite() {
+      if (!confirm("現在の「公開」イベントで公開ページを更新しますか？")) return;
+      setLoading(true);
+      google.script.run
+        .withSuccessHandler(result => { setLoading(false); showToast(result.message); })
+        .withFailureHandler(handleError)
+        .publishAdminSite();
+    }
+
+    function setLoading(value) { document.getElementById("loading").hidden = !value; }
+    function handleError(error) { setLoading(false); showToast(error.message || String(error), true); }
+    function showToast(message, error = false) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message; toast.classList.toggle("error", error); toast.hidden = false;
+      clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toast.hidden = true, 5200);
+    }
+    function el(tag, className = "", text = "") { const node = document.createElement(tag); if (className) node.className = className; if (text) node.textContent = text; return node; }
+    function textCell(text) { const td = document.createElement("td"); td.textContent = text || "—"; return td; }
+    function titleCell(event) { const td = el("td", "title-cell"); td.append(el("div", "", event.title || "名称未設定")); if (event.organizer_name) td.append(el("small", "panel-sub", event.organizer_name)); return td; }
+    function badgeCell(text) { const td = document.createElement("td"); td.append(badge(text, text === "公開" || text === "稼働中" || text === "確認済み" ? "published" : text === "確認待ち" || text === "要確認" || text === "あり" ? "warning" : "")); return td; }
+    function badge(text, tone = "") { return el("span", "badge " + tone, text || "—"); }
+    function formatDate(value) { if (!value) return "未取得"; const date = new Date(value); return isNaN(date) ? value : date.toLocaleString("ja-JP"); }
+    function shortDate(value) { if (!value) return "要確認"; const date = new Date(value); return isNaN(date) ? value : `${date.getMonth()+1}月${date.getDate()}日 ${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`; }
+    loadData();
+  </script>
+</body>
+</html>
