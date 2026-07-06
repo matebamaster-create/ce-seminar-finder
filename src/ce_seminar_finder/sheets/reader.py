@@ -10,6 +10,9 @@ from ce_seminar_finder.publisher import PUBLIC_FIELDS
 from .schema import EVENTS_HEADERS
 
 
+MULTI_VALUE_FIELDS = {"genres", "detailed_tags"}
+
+
 def read_event_rows(service: Any, spreadsheet_id: str) -> list[dict[str, Any]]:
     response = (
         service.spreadsheets()
@@ -41,7 +44,10 @@ def event_records_from_rows(rows: list[dict[str, Any]]) -> list[EventRecord]:
     records: list[EventRecord] = []
     for row in rows:
         fixed = {
-            field: _normalize_cell(row.get(field))
+            field: _normalize_cell(
+                row.get(field),
+                multi_value=field in MULTI_VALUE_FIELDS,
+            )
             for field in PUBLIC_FIELDS
             if row.get(field) not in (None, "")
         }
@@ -136,12 +142,14 @@ def archive_expired_sheet_events(
     return len(expired)
 
 
-def _normalize_cell(value: Any) -> Any:
+def _normalize_cell(value: Any, *, multi_value: bool = False) -> Any:
     if isinstance(value, str):
         if value.upper() == "TRUE":
             return True
         if value.upper() == "FALSE":
             return False
+        if multi_value:
+            return [item.strip() for item in value.splitlines() if item.strip()]
         if "\n" in value:
             return [item for item in value.splitlines() if item]
     return value
