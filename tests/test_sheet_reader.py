@@ -89,6 +89,19 @@ class SheetReaderTest(unittest.TestCase):
         )
         self.assertFalse(record.fixed_values["has_on_demand"])
 
+    def test_single_genre_is_still_normalized_to_a_list(self) -> None:
+        record = event_records_from_rows(
+            [
+                {
+                    "event_id": "evt_single_genre",
+                    "canonical_event_id": "evt_single_genre",
+                    "publication_status": "公開",
+                    "genres": "循環",
+                }
+            ]
+        )[0]
+        self.assertEqual(["循環"], record.fixed_values["genres"])
+
     def test_archives_only_expired_published_rows(self) -> None:
         rows = [
             {
