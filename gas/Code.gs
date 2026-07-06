@@ -422,6 +422,11 @@ function getAdminDashboard() {
         return source.consecutive_failures > 0;
       }).length,
     },
+    connections: {
+      github_actions: Boolean(
+        PropertiesService.getScriptProperties().getProperty("GITHUB_TOKEN")
+      ),
+    },
     options: {
       publication_statuses: ["公開", "非公開", "確認待ち", "アーカイブ"],
       review_labels: ["なし", "あり"],
