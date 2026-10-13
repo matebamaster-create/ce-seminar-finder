@@ -115,6 +115,25 @@ class GroundingTest(unittest.TestCase):
             source_text="会員無料、非会員￥500")
         self.assertIsNone(result.fields["fee_category"].value)
 
+    def test_fee_amounts_cannot_be_swapped_between_roles(self):
+        text = "会員500円、非会員1000円"
+        result = validate_extraction({"is_event": True, "fields": {"fee_text": {
+            "value": "会員1000円、非会員500円", "confidence": 1, "evidence": text}}},
+            allowed_urls=(), provider="openai", model="test", prompt_version=PROMPT_VERSION, source_text=text)
+        self.assertIsNone(result.fields["fee_text"].value)
+
+    def test_publication_date_is_not_adopted_as_event_date(self):
+        text = "掲載日 2026年11月20日"
+        result = validate_extraction({"is_event": True, "fields": {"event_start": {
+            "value": "2026-11-20T00:00:00+09:00", "confidence": 1, "evidence": text}}},
+            allowed_urls=(), provider="openai", model="test", prompt_version=PROMPT_VERSION, source_text=text)
+        self.assertIsNone(result.fields["event_start"].value)
+
+    def test_datetime_is_normalized_to_japan_time(self):
+        result = self.validate({"event_start": {"value": "2026-11-20T09:00:00Z", "confidence": 1,
+            "evidence": "開催日時 2026年11月20日 18:00～20:00"}})
+        self.assertEqual("2026-11-20T18:00:00+09:00", result.fields["event_start"].value)
+
     def test_grounded_time_range_end_is_accepted(self):
         result = self.validate({"event_end": {"value": "2026-11-20T20:00:00+09:00", "confidence": 1,
             "evidence": "開催日時 2026年11月20日 18:00～20:00"}})

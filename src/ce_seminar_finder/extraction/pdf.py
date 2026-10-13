@@ -3,6 +3,10 @@ from __future__ import annotations
 import hashlib
 import io
 import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -31,7 +35,34 @@ class PypdfBackend:
         reader = PdfReader(io.BytesIO(data), strict=True)
         if reader.is_encrypted:
             raise ValueError("ENCRYPTED_PDF")
+        if len(reader.pages) > 60:
+            raise ValueError("PDF_PAGE_LIMIT")
         return [(page.extract_text() or "") for page in reader.pages]
+
+
+class LocalOcrProvider:
+    """Public PDFs stay local: render just a low-quality page, then Japanese OCR."""
+    def __init__(self, *, max_pages: int = 20, runner=None):
+        self.max_pages, self.calls = max_pages, 0
+        self.runner = runner or subprocess.run
+
+    def extract_page(self, pdf_data: bytes, page_number: int) -> str:
+        if self.calls >= self.max_pages:
+            raise ValueError("OCR_PAGE_LIMIT")
+        poppler, tesseract = shutil.which("pdftoppm"), shutil.which("tesseract")
+        if not poppler or not tesseract:
+            raise ValueError("OCR_UNAVAILABLE")
+        self.calls += 1
+        with tempfile.TemporaryDirectory(prefix="ce-pdf-") as directory:
+            pdf = Path(directory) / "source.pdf"
+            image = Path(directory) / "page"
+            pdf.write_bytes(pdf_data)
+            self.runner([poppler, "-f", str(page_number), "-l", str(page_number),
+                "-singlefile", "-scale-to", "2400", "-png", str(pdf), str(image)],
+                check=True, capture_output=True, timeout=45)
+            result = self.runner([tesseract, str(image) + ".png", "stdout", "-l", "jpn+eng", "--psm", "3"],
+                check=True, capture_output=True, timeout=45)
+            return result.stdout.decode("utf-8", errors="replace")
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,13 +125,16 @@ def extract_pdf(
         needs_ocr = len(normalized) < 30 or quality < 0.35
         method = "text_layer"
         if needs_ocr and important_candidate and ocr_provider is not None:
-            ocr_text = _normalize_text(
-                ocr_provider.extract_page(data, page_number)
-            )
+            try:
+                ocr_text = _normalize_text(ocr_provider.extract_page(data, page_number))
+            except Exception as error:
+                safe = str(error) if isinstance(error, ValueError) and str(error) in {"OCR_UNAVAILABLE", "OCR_PAGE_LIMIT"} else "OCR_FAILED"
+                warnings.append(safe)
+                ocr_text = ""
             if text_quality_score(ocr_text) > quality:
                 normalized = ocr_text
                 quality = text_quality_score(ocr_text)
-                needs_ocr = False
+                needs_ocr = len(normalized) < 30 or quality < 0.35
                 method = "ocr"
         if needs_ocr:
             warnings.append(f"OCR_CANDIDATE_PAGE_{page_number}")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from .models import parse_datetime
@@ -29,6 +30,7 @@ from .extraction.openai_provider import DEFAULT_MODEL, OpenAIProvider, OpenAIExt
 from .extraction.prompt import PROMPT_VERSION
 from .extraction.refinement import candidate_payload, read_saved_candidates, read_processed_keys, refine_candidates
 from .extraction.service import ExtractionService
+from .extraction.documents import PdfContextLoader
 from .sheets.initializer import build_plan, initialize_spreadsheet, load_google_service
 from .sheets.reader import (
     archive_expired_sheet_events,
@@ -125,6 +127,7 @@ def _parser() -> argparse.ArgumentParser:
         default=Path("var/daily"),
     )
     daily_run.add_argument("--max-detail-pages", type=int, default=1)
+    daily_run.add_argument("--full-detail", action="store_true", help="初回一括用。過去の終了イベント以外の発見済み詳細を低速で取得します")
     daily_run.add_argument("--spreadsheet-id")
     daily_run.add_argument("--use-sheet-sources", action="store_true")
     daily_run.add_argument("--render-public-pages", action="store_true")
@@ -159,7 +162,9 @@ def _parser() -> argparse.ArgumentParser:
     refine.add_argument("--input", type=Path, nargs="+", required=True)
     refine.add_argument("--output", type=Path, required=True)
     refine.add_argument("--summary", type=Path)
-    refine.add_argument("--max-calls", type=int, choices=range(1, 6), default=5)
+    refine.add_argument("--max-calls", type=int, default=0, help="API回数上限。0は件数制限なし")
+    refine.add_argument("--include-pdf", action="store_true", help="公式PDFを取得し、文字抽出・日本語OCRを行います")
+    refine.add_argument("--workers", type=int, choices=range(1, 5), default=2)
     refine.add_argument("--model", default=DEFAULT_MODEL)
     refine.add_argument("--env-file", type=Path)
     refine.add_argument("--cache", type=Path, default=Path("var/ai-cache.json"))
@@ -181,7 +186,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "refine-candidates":
         try:
-            provider = OpenAIProvider(load_api_key(args.env_file), model=args.model, max_requests=args.max_calls)
+            if args.max_calls < 0:
+                raise ValueError("--max-calls must be nonnegative")
+            provider = OpenAIProvider(load_api_key(args.env_file), model=args.model, max_requests=args.max_calls or None)
         except OpenAIExtractionError as error:
             print(json.dumps({"status": "failed", "code": error.code}))
             return 1
@@ -189,11 +196,18 @@ def main(argv: list[str] | None = None) -> int:
         google = load_google_service() if args.spreadsheet_id else None
         processed = read_processed_keys(google, args.spreadsheet_id) if google else set()
         extractor = ExtractionService(provider, prompt_version=PROMPT_VERSION, cache=JsonExtractionCache(args.cache))
-        refined, summary = refine_candidates(candidates, extractor, processed_keys=processed)
+        pdf_loader = PdfContextLoader(args.cache.parent / "pdf-documents") if args.include_pdf else None
+        repository = SheetCollectionRepository(google, args.spreadsheet_id) if google else None
+        def checkpoint(rows):
+            if repository:
+                repository.append_candidates(rows)
+            print(json.dumps({"status": "progress", "requests": provider.requests,
+                "input_tokens": provider.input_tokens, "output_tokens": provider.output_tokens,
+                "checkpoint_candidates": len(rows)}, ensure_ascii=False), flush=True)
+        refined, summary = refine_candidates(candidates, extractor, processed_keys=processed,
+            pdf_loader=pdf_loader, checkpoint=checkpoint, workers=args.workers)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps([candidate_payload(c) for c in refined], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        if google:
-            SheetCollectionRepository(google, args.spreadsheet_id).append_candidates(refined)
         summary.update({"model": args.model, "prompt_version": PROMPT_VERSION,
             "sheet_updated": bool(google and refined), "auto_published": False})
         if args.summary:
@@ -363,6 +377,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.region:
             ids = region_source_ids(args.region)
             configs = tuple(config for config in configs if config.source_id in ids)
+        if args.full_detail:
+            configs = tuple(replace(config, max_requests_per_run=max(2000, config.max_requests_per_run)) for config in configs)
         known = {item.source_id for item in source_configs()}
         unknown = sorted((enabled or set()) - known)
         if unknown:
@@ -393,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
                 sources=configs,
                 enabled_source_ids=enabled,
                 lock_path=args.work_directory / "daily.lock",
-                max_detail_pages=max(0, args.max_detail_pages),
+                max_detail_pages=None if args.full_detail else max(0, args.max_detail_pages),
             )
         except RunAlreadyActive as exc:
             print(json.dumps({"status": "already_running", "message": str(exc)}))

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.message import Message
 from typing import Protocol
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit, quote
 import certifi
 
 from .cache import FetchState, JsonFetchStateStore
@@ -73,7 +73,10 @@ class StandardHttpTransport:
         timeout: float,
         max_bytes: int,
     ) -> RawHttpResponse:
-        request = urllib.request.Request(url, headers=dict(headers), method="GET")
+        parsed = urlsplit(url)
+        wire_url = urlunsplit((parsed.scheme, parsed.netloc, quote(parsed.path, safe="/%:@"),
+                              quote(parsed.query, safe="=&%/?:@+"), ""))
+        request = urllib.request.Request(wire_url, headers=dict(headers), method="GET")
         try:
             response = self._opener.open(request, timeout=timeout)
         except urllib.error.HTTPError as exc:

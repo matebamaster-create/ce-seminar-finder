@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any, Mapping
+from threading import RLock
 
 from .models import ExtractionRequest
 
@@ -34,20 +35,23 @@ class JsonExtractionCache:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._items: dict[str, dict[str, Any]] | None = None
+        self._lock = RLock()
 
     def get(self, key: str) -> Mapping[str, Any] | None:
-        return self._load().get(key)
+        with self._lock:
+            return self._load().get(key)
 
     def put(self, key: str, value: Mapping[str, Any]) -> None:
-        items = self._load()
-        items[key] = dict(value)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(items, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(self.path)
+        with self._lock:
+            items = self._load()
+            items[key] = dict(value)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+            temporary.write_text(
+                json.dumps(items, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(self.path)
 
     def _load(self) -> dict[str, dict[str, Any]]:
         if self._items is not None:

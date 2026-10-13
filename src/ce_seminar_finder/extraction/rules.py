@@ -57,6 +57,9 @@ def extract_rule_values(text: str, *, allowed_urls: Iterable[str] = (), title_hi
             values[name] = ExtractedField(value, confidence, evidence[:300])
 
     date_text = _value_after(text, ("学会・セミナー開催日", "開催日時", "開催日", "日時", "日程", "会期"))
+    if not date_text and DATE_PATTERN.match(_normalized(title_hint)):
+        # A source's dated event-link label is not an article publication date.
+        date_text = _normalized(title_hint)
     match = DATE_PATTERN.search(date_text)
     if match:
         try:

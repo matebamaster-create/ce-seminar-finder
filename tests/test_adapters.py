@@ -71,8 +71,6 @@ class AdapterTest(unittest.TestCase):
             ("src_shiga", "https://www.sacet.jp/respiratory-seminar/"),
             ("src_kyoto", "https://kcet.jp/?p=902"),
             ("src_osaka", "https://osakace.com/archives/42769"),
-            ("src_hyogo", "https://hce.umin.jp/pdf/seminer/respiratory.pdf"),
-            ("src_wakayama", "https://wce-rinkou.org/pdf/news/20260410.pdf"),
         ]
         for source_id, detail_url in cases:
             with self.subTest(source=source_id):
@@ -90,6 +88,20 @@ class AdapterTest(unittest.TestCase):
                     self.assertIn(detail_url, candidate.pdf_urls)
                 else:
                     self.assertEqual(detail_url, candidate.detail_url)
+
+    def test_hyogo_heading_and_pdf_do_not_mix_other_events_or_archives(self):
+        html = '<h2>セミナー＆学習会への案内</h2><h6>呼吸セミナー</h6><p class="mb2">日時：2026年11月20日 19:00<a href="/pdf/a.pdf">PDF</a></p><h6>循環セミナー</h6><p class="mb2">日時：2026年12月20日 10:00<a href="/pdf/b.pdf">PDF</a></p><h2>過去のセミナー</h2><h6>古いセミナー</h6><p><a href="/pdf/old.pdf">PDF</a></p>'
+        result = adapter_for_source("src_hyogo").parse(source_config("src_hyogo"), text_document(html, "https://hce.umin.jp/seminars.html"))
+        self.assertEqual(2, len(result.candidates))
+        self.assertEqual(("https://hce.umin.jp/pdf/a.pdf",), result.candidates[0].pdf_urls)
+        self.assertTrue(result.candidates[1].extracted_fields["event_start"].value.startswith("2026-12-20"))
+
+    def test_wakayama_dated_links_keep_one_pdf_and_original_date(self):
+        html = '<li><a href="/pdf/a.pdf">2026年11月20日 呼吸セミナー開催のご案内</a></li><li><a href="/pdf/b.pdf">2026年12月20日 循環セミナー開催のご案内</a></li>'
+        result = adapter_for_source("src_wakayama").parse(source_config("src_wakayama"), text_document(html, "https://wce-rinkou.org/seminar.html"))
+        self.assertEqual(2, len(result.candidates))
+        self.assertEqual(1, len(result.candidates[0].pdf_urls))
+        self.assertTrue(result.candidates[0].extracted_fields["event_start"].value.startswith("2026-11-20"))
 
     def test_nara_filters_national_feed_by_prefecture(self) -> None:
         rss = """<?xml version="1.0" encoding="UTF-8"?>

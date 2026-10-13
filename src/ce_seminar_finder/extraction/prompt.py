@@ -5,7 +5,7 @@ import json
 from .models import ExtractionRequest
 
 
-PROMPT_VERSION = "event-extraction-v2-grounded"
+PROMPT_VERSION = "event-extraction-v3-pdf"
 
 
 def build_extraction_messages(
@@ -28,6 +28,10 @@ def build_extraction_messages(
             "fee_textには会員・非会員・学生などの区分を保ち、締切や定員を混ぜないでください。"
             "会員だけ無料の場合はfee_category=有料です。単位・対象条件も推測せず、原文の表現を保ってください。"
             "不明な値はconfidence=0、value=nullです。taxonomyにある分類名だけを使ってください。"
+            "PDFのページ本文も引用データです。title_hintが略称の場合は原文の正式名称を返せますが、"
+            "無関係な講演・別年度の案内を混ぜないでください。文字読み取りの誤字は推測で直さず、"
+            "特に日時・金額・単位が不明瞭ならnullにして要確認へ回してください。"
+            "会場名・住所・開催都道府県は原文にある場合だけ抽出し、問い合わせ先住所と混同しないでください。"
         ),
     }
     source_data = {

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -15,6 +16,7 @@ from .models import ExtractedField, ExtractionRequest
 from .openai_provider import OpenAIExtractionError
 from .rules import URL_PATTERN
 from .service import ExtractionService
+from .prompt import build_extraction_messages
 
 
 def candidate_content_hash(candidate: EventCandidate) -> str:
@@ -22,8 +24,12 @@ def candidate_content_hash(candidate: EventCandidate) -> str:
 
 
 def extraction_request(candidate: EventCandidate, pdf_chunks: tuple[str, ...] = ()) -> ExtractionRequest:
+    if not pdf_chunks:
+        pdf_chunks = tuple(f"[PDF {d['url']} sha256={d.get('sha256', '')}]\n{c['text']}"
+            for d in candidate.pdf_documents for c in d.get("chunks", []))
     urls = [candidate.detail_url, candidate.source_url, *candidate.pdf_urls,
-            *URL_PATTERN.findall(candidate.block_text)]
+            *URL_PATTERN.findall(candidate.block_text),
+            *(url for text in pdf_chunks for url in URL_PATTERN.findall(text))]
     for name in ("official_url", "application_url"):
         field = candidate.extracted_fields.get(name)
         if field and isinstance(field.value, str):
@@ -45,7 +51,8 @@ def candidate_payload(candidate: EventCandidate) -> dict:
         "extracted_fields": {k: v.as_dict() for k, v in candidate.extracted_fields.items()},
         "confidence_hint": candidate.confidence_hint,
         "ai_result": candidate.ai_result.as_dict() if candidate.ai_result else None,
-        "ai_cache_key": candidate.ai_cache_key}
+        "ai_cache_key": candidate.ai_cache_key, "pdf_documents": list(candidate.pdf_documents),
+        "extraction_warnings": list(candidate.extraction_warnings)}
 
 
 def read_saved_candidates(paths: list[Path]) -> list[EventCandidate]:
@@ -67,7 +74,9 @@ def read_saved_candidates(paths: list[Path]) -> list[EventCandidate]:
                 discovery_method=row.get("discovery_method", "html"), block_text=row.get("block_text", ""),
                 extracted_fields={k: ExtractedField(v.get("value"), float(v.get("confidence", 0)), v.get("evidence"))
                     for k, v in row.get("extracted_fields", {}).items()},
-                confidence_hint=float(row.get("confidence_hint", .5)))
+                confidence_hint=float(row.get("confidence_hint", .5)),
+                pdf_documents=tuple(row.get("pdf_documents", [])),
+                extraction_warnings=tuple(row.get("extraction_warnings", [])))
             candidates[(candidate.source_id, candidate.detail_url, candidate.title_hint)] = candidate
     return list(candidates.values())
 
@@ -90,14 +99,75 @@ def read_processed_keys(service, spreadsheet_id: str) -> set[str]:
     return keys
 
 
+def fit_request(request, max_chars):
+    truncated = False
+    while sum(len(m["content"]) for m in build_extraction_messages(request)) > max_chars:
+        truncated = True
+        if request.pdf_chunks:
+            request = replace(request, pdf_chunks=request.pdf_chunks[:-1])
+        elif len(request.candidate_text) > 1000:
+            request = replace(request, candidate_text=request.candidate_text[:len(request.candidate_text)//2])
+        elif request.rule_values:
+            request = replace(request, rule_values={})
+        else:
+            break
+    return request, truncated
+
+
 def refine_candidates(candidates: list[EventCandidate], service: ExtractionService,
-                      *, processed_keys: set[str] | None = None) -> tuple[list[EventCandidate], dict]:
+                      *, processed_keys: set[str] | None = None, pdf_loader=None,
+                      checkpoint=None, checkpoint_size: int = 20, workers: int = 1) -> tuple[list[EventCandidate], dict]:
     processed = processed_keys or set()
-    refined, skipped, errors = [], 0, []
+    refined, skipped, errors, pending = [], 0, [], []
+    source_stats = {}
     provider = service.provider
-    for candidate in candidates:
-        if not candidate.block_text.strip():
+    if not 1 <= workers <= 4:
+        raise ValueError("workers must be between 1 and 4")
+
+    def accept(candidate, key, result):
+        from .validator import _ground_text
+        merged = dict(candidate.extracted_fields)
+        fee = merged.get("fee_text")
+        if fee and re.search(r"[:：]\s*(?:[、,;；]|$)", str(fee.value or "")):
+            merged.pop("fee_text")
+        if result.is_event:
+            merged.update({k: v for k, v in result.fields.items() if v.value is not None})
+            source_text = candidate.block_text + "\n" + "\n".join(c["text"]
+                for d in candidate.pdf_documents for c in d.get("chunks", []))
+            merged.update({k: v for k, v in result.fields.items() if v.value is None and v.evidence
+                and _ground_text(v.evidence) in _ground_text(source_text)})
+        if candidate.extraction_warnings:
+            result = replace(result, review_reasons=tuple(dict.fromkeys((*result.review_reasons, *candidate.extraction_warnings))))
+        updated = replace(candidate, extracted_fields=merged, ai_result=result, ai_cache_key=key)
+        refined.append(updated)
+        pending.append(updated)
+        source_stats[candidate.source_id]["refined"] += 1
+        processed.add(key)
+        if checkpoint and len(pending) >= checkpoint_size:
+            checkpoint(list(pending))
+            pending.clear()
+
+    def finish(job):
+        candidate, key, future = job
+        try:
+            accept(candidate, key, future.result())
+            return False
+        except OpenAIExtractionError as error:
+            if error.code == "REQUEST_LIMIT_REACHED":
+                return True
+            errors.append({"source_id": candidate.source_id, "code": error.code, "http_status": error.status})
+            return error.code != "INPUT_LIMIT_REACHED"
+
+    # Public downloads remain sequential per host. API extraction overlaps at
+    # most a small number of candidates; Sheets checkpoints remain serial.
+    jobs, halted = [], False
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+      for candidate in candidates:
+        counts = source_stats.setdefault(candidate.source_id, {"input": 0, "refined": 0, "skipped": 0})
+        counts["input"] += 1
+        if not candidate.block_text.strip() and not candidate.pdf_urls and not candidate.pdf_documents:
             skipped += 1
+            counts["skipped"] += 1
             continue
         end = next((candidate.extracted_fields[k].value for k in ("stream_end", "event_end", "event_start")
             if k in candidate.extracted_fields and candidate.extracted_fields[k].value), None)
@@ -106,31 +176,31 @@ def refine_candidates(candidates: list[EventCandidate], service: ExtractionServi
                 date = datetime.fromisoformat(str(end))
                 if date.tzinfo and date < datetime.now(UTC) - timedelta(days=45):
                     skipped += 1
+                    counts["skipped"] += 1
                     continue
             except ValueError:
                 pass
-        request = extraction_request(candidate)
+        if pdf_loader:
+            candidate = pdf_loader.enrich(candidate)
+        request, truncated = fit_request(extraction_request(candidate), getattr(provider, "max_input_chars", 40000))
+        if truncated:
+            candidate = replace(candidate, extraction_warnings=(*candidate.extraction_warnings, "INPUT_CONTEXT_TRUNCATED"))
         key = extraction_cache_key(request, provider=provider.name, model=provider.model, prompt_version=service.prompt_version)
         if key in processed:
             skipped += 1
+            counts["skipped"] += 1
             continue
-        try:
-            result = service.extract(request)
-        except OpenAIExtractionError as error:
-            if error.code == "REQUEST_LIMIT_REACHED":
+        jobs.append((candidate, key, executor.submit(service.extract, request)))
+        if len(jobs) >= workers:
+            halted = finish(jobs.pop(0))
+            if halted:
                 break
-            errors.append({"source_id": candidate.source_id, "code": error.code, "http_status": error.status})
-            if error.code != "INPUT_LIMIT_REACHED":
-                break  # Authentication/quota/network problems must not cause repeated requests.
-            continue
-        merged = dict(candidate.extracted_fields)
-        fee = merged.get("fee_text")
-        if fee and re.search(r"[:：]\s*(?:[、,;；]|$)", str(fee.value or "")):
-            merged.pop("fee_text")  # Do not fall back to the same invalid rule value.
-        if result.is_event:
-            merged.update({k: v for k, v in result.fields.items() if v.value is not None})
-        refined.append(replace(candidate, extracted_fields=merged, ai_result=result, ai_cache_key=key))
-        processed.add(key)
+      for job in jobs:
+        if not halted or not job[2].cancel():
+            halted = finish(job) or halted  # Retain successful in-flight results.
+    if checkpoint and pending:
+        checkpoint(pending)
     return refined, {"input_candidates": len(candidates), "refined": len(refined), "skipped": skipped,
         "requests": getattr(provider, "requests", 0), "input_tokens": getattr(provider, "input_tokens", 0),
-        "output_tokens": getattr(provider, "output_tokens", 0), "errors": errors}
+        "output_tokens": getattr(provider, "output_tokens", 0), "errors": errors,
+        "sources": source_stats, "halted": halted, **(pdf_loader.stats if pdf_loader else {})}

@@ -4,7 +4,7 @@ import hashlib
 import time
 import uuid
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -56,7 +56,7 @@ class SourceCollector:
         adapter: PatternHtmlAdapter,
         *,
         force: bool = False,
-        max_detail_pages: int = 3,
+        max_detail_pages: int | None = 3,
         resolve_dns: bool = True,
     ) -> SourceRunResult:
         if not source.enabled and not force:
@@ -116,10 +116,24 @@ class SourceCollector:
         detail_fetches = 0
         hosts = allowed_hosts(source)
         for candidate in candidates:
-            if detail_fetches >= max_detail_pages:
+            if max_detail_pages is not None and detail_fetches >= max_detail_pages:
                 enriched.append(candidate)
                 continue
             parsed = urlsplit(candidate.detail_url)
+            # PDFs belong to the PDF parser, never to an HTML text decoder.
+            if parsed.path.lower().endswith(".pdf"):
+                enriched.append(candidate)
+                continue
+            end = next((candidate.extracted_fields[k].value for k in ("stream_end", "event_end", "event_start")
+                if k in candidate.extracted_fields and candidate.extracted_fields[k].value), None)
+            if end:
+                try:
+                    date = datetime.fromisoformat(str(end))
+                    if date.tzinfo and date < datetime.now(UTC) - timedelta(days=45):
+                        enriched.append(candidate)
+                        continue
+                except ValueError:
+                    pass
             base_url = candidate.detail_url.split("#", 1)[0]
             if parsed.hostname not in hosts:
                 enriched.append(candidate)
@@ -134,6 +148,8 @@ class SourceCollector:
                 continue
             if request_count >= source.max_requests_per_run:
                 enriched.append(candidate)
+                if "DETAIL_REQUEST_LIMIT" not in result.warnings:
+                    result.warnings.append("DETAIL_REQUEST_LIMIT")
                 continue
             response = self._fetch_and_log(
                 source,

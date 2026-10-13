@@ -120,7 +120,7 @@ class RefinementTest(unittest.TestCase):
         raw = {"is_event": True, "event_confidence": .99, "fields": {"fee_text": {
             "value": incomplete, "confidence": .99, "evidence": incomplete}}}
         refined, _ = refine_candidates([item], extractor(raw))
-        self.assertNotIn("fee_text", refined[0].extracted_fields)
+        self.assertIsNone(refined[0].extracted_fields["fee_text"].value)
         sheets = FakeSheets()
         CandidateIngestor(sheets, "test").ingest(refined)
         self.assertEqual("", sheets.objects("Events")[0]["fee_text"])

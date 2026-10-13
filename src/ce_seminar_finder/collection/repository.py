@@ -37,7 +37,9 @@ class SheetCollectionRepository:
 
     def append_candidates(self, candidates: list[EventCandidate]) -> None:
         from .ingestion import CandidateIngestor
-        CandidateIngestor(self.service, self.spreadsheet_id).ingest(candidates)
+        from ce_seminar_finder.sheets.capacity import ensure_row_capacity
+        CandidateIngestor(self.service, self.spreadsheet_id,
+            ensure_capacity=lambda required: ensure_row_capacity(self.service, self.spreadsheet_id, required)).ingest(candidates)
 
     def append_logs(self, logs: list[FetchLogEntry]) -> None:
         if not logs:
@@ -283,6 +285,15 @@ def _review_reason_display(reasons: list[str]) -> str:
         "AI_SOURCE_CHANGED": "AI抽出後に原文が変わったため再確認してください",
         "FEE_TEXT_INCOMPLETE": "料金区分の記載が不完全です。原文を確認してください",
         "URL_NOT_IN_SOURCE": "原文で確認できないURLを採用しませんでした",
+        "PDF_FETCH_FAILED": "公式PDFの取得に失敗しました",
+        "PDF_TEXT_REVIEW_REQUIRED": "PDFの文字読み取り結果を確認してください",
+        "OCR_UNAVAILABLE": "画像PDFの文字読み取りが未実施です",
+        "OCR_FAILED": "画像PDFの文字読み取りに失敗しました",
+        "OCR_TEXT_REVIEW_REQUIRED": "OCRで読んだ日時・金額はPDF原本を確認してください",
+        "OCR_PAGE_LIMIT": "PDFの残りページを確認してください",
+        "INPUT_CONTEXT_TRUNCATED": "長い本文の未抽出部分を確認してください",
+        "PDF_PAGE_LIMIT": "大きなPDFの原本を確認してください",
+        "PAST_EVENT_CANDIDATE": "終了済みの開催情報です。公開前に確認してください",
     }
     def label(reason):
         if reason in labels:

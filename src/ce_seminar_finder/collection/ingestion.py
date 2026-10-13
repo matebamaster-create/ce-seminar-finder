@@ -9,9 +9,11 @@ from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from ce_seminar_finder.extraction.refinement import candidate_content_hash
+from ce_seminar_finder.extraction.documents import pdf_evidence_location
 from ce_seminar_finder.collection.sources import source_config
 from ce_seminar_finder.sheets.schema import (
     AUTO_FIELD_HEADERS, EVENTS_HEADERS, EVENT_SOURCES_HEADERS, REVIEW_QUEUE_HEADERS, DUPLICATE_HEADERS,
+    DOCUMENTS_HEADERS, DOCUMENT_TEXT_HEADERS,
 )
 
 FIELD_MAP = {"event_start": "event_start_at", "event_end": "event_end_at",
@@ -36,9 +38,10 @@ def _cell(value):
 
 
 class CandidateIngestor:
-    def __init__(self, service, spreadsheet_id):
+    def __init__(self, service, spreadsheet_id, *, ensure_capacity=None):
         self.api = service.spreadsheets().values()
         self.spreadsheet_id = spreadsheet_id
+        self.ensure_capacity = ensure_capacity
 
     def _rows(self, sheet, width):
         column = self._column(width)
@@ -62,13 +65,18 @@ class CandidateIngestor:
             return
         specs = {"Events": EVENTS_HEADERS, "EventSources": EVENT_SOURCES_HEADERS,
                  "ReviewQueue": REVIEW_QUEUE_HEADERS, "AutoFieldValues": AUTO_FIELD_HEADERS, "DuplicateCandidates": DUPLICATE_HEADERS}
+        if any(c.pdf_documents for c in candidates):
+            specs.update({"Documents": DOCUMENTS_HEADERS, "DocumentTextChunks": DOCUMENT_TEXT_HEADERS})
         rows = {name: self._rows(name, len(headers)) for name, headers in specs.items()}
+        original_events = {r["__row_number"]: dict(r) for r in rows["Events"]}
         by_url = {canonical_url(str(e.get("primary_official_url", ""))): e for e in rows["Events"] if e.get("event_id")}
         by_id = {e["event_id"]: e for e in rows["Events"] if e.get("event_id")}
         sources_by_id = {s["event_source_id"]: s for s in rows["EventSources"] if s.get("event_source_id")}
         reviews_by_id = {r["event_id"]: r for r in rows["ReviewQueue"] if r.get("event_id") and r.get("decision") in ("", "未判断")}
         autos_by_id = {r["value_id"]: r for r in rows["AutoFieldValues"] if r.get("value_id")}
         duplicate_by_id = {r["duplicate_candidate_id"]: r for r in rows["DuplicateCandidates"] if r.get("duplicate_candidate_id")}
+        documents_by_id = {r["document_id"]: r for r in rows.get("Documents", []) if r.get("document_id")}
+        chunks_by_id = {(r["document_id"], str(r["chunk_index"])): r for r in rows.get("DocumentTextChunks", []) if r.get("document_id")}
         next_row = {name: max((r["__row_number"] for r in values), default=1)+1 for name, values in rows.items()}
         writes = {}
         now = datetime.now(UTC).isoformat()
@@ -92,7 +100,7 @@ class CandidateIngestor:
             event = by_id.get(previous_source.get("event_id")) if previous_source else by_url.get(url)
             is_new = event is None
             fields = dict(candidate.extracted_fields)
-            if is_new:
+            if is_new and not candidate.ai_result:
                 end_field = next((fields[k] for k in ("stream_end", "event_end", "event_start") if k in fields and fields[k].value), None)
                 if end_field:
                     try:
@@ -112,6 +120,22 @@ class CandidateIngestor:
                 by_id[event_id] = event
                 by_url.setdefault(url, event)
             event_id = event["event_id"]
+            pdf_ids = {}
+            for document in candidate.pdf_documents:
+                doc_id = stable_id("doc_", event_source_id, document["url"], document.get("sha256", ""))
+                pdf_ids[document["url"]] = doc_id
+                row = dict(documents_by_id.get(doc_id, {}))
+                row.update({k: document.get(k, "") for k in DOCUMENTS_HEADERS if k not in {"document_id", "event_source_id"}})
+                row.update({"document_id": doc_id, "event_source_id": event_source_id,
+                    "error_code": document.get("error_code") or "\n".join(document.get("warnings", []))})
+                save("Documents", row)
+                documents_by_id[doc_id] = row
+                for chunk in document.get("chunks", []):
+                    key = (doc_id, str(chunk["chunk_index"]))
+                    chunk_row = dict(chunks_by_id.get(key, {}))
+                    chunk_row.update({**chunk, "document_id": doc_id, "is_searchable": False})
+                    save("DocumentTextChunks", chunk_row)
+                    chunks_by_id[key] = chunk_row
             human_owned = bool(event.get("last_admin_updated_at")) or event.get("review_status") == "確認済み" or event.get("publication_status") != "確認待ち"
             classification_id = stable_id("av_", event_id, "is_event", candidate.source_id)
             classification = autos_by_id.get(classification_id, {})
@@ -133,19 +157,22 @@ class CandidateIngestor:
                 ai_location = json.loads(classification.get("evidence_location") or "{}")
             except (ValueError, TypeError):
                 ai_location = {}
-            ai_source_changed = bool(ai_location.get("content_hash") and
+            if not isinstance(ai_location, dict):
+                ai_location = {}
+            ai_source_changed = bool(candidate.block_text.strip() and ai_location.get("content_hash") and
                                      ai_location["content_hash"] != candidate_content_hash(candidate))
             proposed = {}
             for name, field in fields.items():
-                if field.value is None:
+                is_ai = bool(candidate.ai_result and candidate.ai_result.is_event and
+                             candidate.ai_result.fields.get(name) == field)
+                if field.value is None and not (is_ai and field.evidence):
                     continue
                 target = FIELD_MAP.get(name, name)
                 if target not in EVENTS_HEADERS:
                     continue
                 value_id = stable_id("av_", event_id, target, candidate.source_id)
                 auto = dict(autos_by_id.get(value_id, {}))
-                is_ai = bool(candidate.ai_result and candidate.ai_result.is_event and
-                             candidate.ai_result.fields.get(name) == field)
+                pdf_location = pdf_evidence_location(candidate, field.evidence or "") if is_ai else {}
                 # A later rule-only collection must not erase a grounded AI
                 # proposal. Changed source text is sent back for review/refinement.
                 if not is_ai and auto.get("extractor") == "ai":
@@ -158,13 +185,13 @@ class CandidateIngestor:
                     "model": candidate.ai_result.model if is_ai else "",
                     "prompt_version": candidate.ai_result.prompt_version if is_ai else "",
                     "evidence_text": field.evidence or "", "evidence_location": json.dumps({
-                        "cache_key": candidate.ai_cache_key, "content_hash": candidate_content_hash(candidate)},
+                        "cache_key": candidate.ai_cache_key, "content_hash": candidate_content_hash(candidate), **pdf_location},
                         ensure_ascii=False) if is_ai else "",
-                    "source_document_id": event_source_id, "extracted_at": now,
-                    "accepted": field.confidence >= 0.85 and not human_owned})
+                    "source_document_id": pdf_ids.get(pdf_location.get("pdf_url"), event_source_id), "extracted_at": now,
+                    "accepted": field.value is not None and field.confidence >= 0.85 and not human_owned})
                 save("AutoFieldValues", auto)
                 autos_by_id[value_id] = auto
-                if field.confidence >= 0.85:
+                if field.value is not None and field.confidence >= 0.85:
                     proposed[target] = field.value
             # Existing approved/edited rows are display snapshots controlled by
             # administrators. Automatic values remain available for comparison.
@@ -189,12 +216,22 @@ class CandidateIngestor:
                 "source_id": candidate.source_id, "source_url": candidate.detail_url,
                 "source_role": "association_listing", "last_seen_at": now,
                 "page_title": candidate.title_hint, "source_published_at": candidate.published_at or "",
-                "content_hash": hashlib.sha256(candidate.block_text.encode()).hexdigest()})
+                "content_hash": hashlib.sha256(candidate.block_text.encode()).hexdigest() if candidate.block_text.strip()
+                    else (previous_source or {}).get("content_hash", "")})
             source_row.setdefault("discovered_at", now)
             save("EventSources", source_row)
             sources_by_id[event_source_id] = source_row
 
-            reasons = []
+            reasons = list(candidate.extraction_warnings)
+            if candidate.ai_result:
+                end = next((event.get(k) for k in ("stream_end_at", "event_end_at", "event_start_at") if event.get(k)), None)
+                if end:
+                    try:
+                        date = datetime.fromisoformat(str(end))
+                        if date.tzinfo and date < datetime.now(UTC):
+                            reasons.append("PAST_EVENT_CANDIDATE")
+                    except ValueError:
+                        pass
             if classification.get("extractor") == "ai":
                 if classification.get("normalized_value_json") == "false":
                     reasons.append("NON_EVENT_CANDIDATE")
@@ -254,10 +291,39 @@ class CandidateIngestor:
                 review.update({"review_id": review.get("review_id") or stable_id("rev_", event_id, now), "event_id": event_id,
                     "priority": "高" if "HIGH_IMPACT_FIELD_CHANGED" in reasons or "AI_SOURCE_CHANGED" in reasons else "通常", "reason_codes": "\n".join(dict.fromkeys(reasons or ["ADMIN_REVIEW_REQUIRED"])),
                     "suggested_action": "修正" if human_owned else "要確認付き公開",
-                    "source_excerpt": candidate.block_text[:500] or candidate.title_hint, "source_urls": candidate.detail_url,
+                    "source_excerpt": candidate.block_text[:500] or review.get("source_excerpt") or candidate.title_hint, "source_urls": candidate.detail_url,
                     "uncertain_fields": "\n".join(changed), "decision": "未判断", "automation_choice": "次回も確認"})
                 review.setdefault("opened_at", now)
                 save("ReviewQueue", review)
                 reviews_by_id[event_id] = review
         if writes:
-            self.api.batchUpdate(spreadsheetId=self.spreadsheet_id, body={"valueInputOption": "RAW", "data": list(writes.values())}).execute()
+            # Re-read immediately before saving: an administrator may have
+            # edited a row while PDF/API processing was running.
+            latest_events = {r["__row_number"]: r for r in self._rows("Events", len(EVENTS_HEADERS))}
+            concurrent_ids = set()
+            for (name, number), item in writes.items():
+                if name != "Events" or number not in original_events:
+                    continue
+                latest = latest_events.get(number)
+                if latest and latest != original_events[number]:
+                    concurrent_ids.add(latest.get("event_id"))
+                    latest["last_auto_fetched_at"] = now
+                    item["values"] = [[_cell(latest.get(h, "")) for h in EVENTS_HEADERS]]
+            for (name, _), item in writes.items():
+                if name == "AutoFieldValues" and item["values"][0][AUTO_FIELD_HEADERS.index("event_id")] in concurrent_ids:
+                    item["values"][0][AUTO_FIELD_HEADERS.index("accepted")] = False
+            if self.ensure_capacity:
+                self.ensure_capacity({name: number-1 for name, number in next_row.items()})
+            # Bounded writes avoid Sheets request-size limits during a full rollout.
+            batch, size = [], 0
+            for item in writes.values():
+                item_size = len(json.dumps(item, ensure_ascii=False).encode())
+                if batch and (len(batch) >= 100 or size + item_size > 1_500_000):
+                    self.api.batchUpdate(spreadsheetId=self.spreadsheet_id,
+                        body={"valueInputOption": "RAW", "data": batch}).execute()
+                    batch, size = [], 0
+                batch.append(item)
+                size += item_size
+            if batch:
+                self.api.batchUpdate(spreadsheetId=self.spreadsheet_id,
+                    body={"valueInputOption": "RAW", "data": batch}).execute()

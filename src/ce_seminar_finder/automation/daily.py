@@ -94,7 +94,7 @@ def run_daily_collection(
     sources: Iterable[SourceConfig],
     enabled_source_ids: set[str] | None,
     lock_path: Path,
-    max_detail_pages: int = 1,
+    max_detail_pages: int | None = 1,
     now: datetime | None = None,
 ) -> DailyRunSummary:
     started = now or datetime.now(UTC)

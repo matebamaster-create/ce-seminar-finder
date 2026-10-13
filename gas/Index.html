@@ -500,7 +500,13 @@
         DUPLICATE_CANDIDATE: "同じイベントの可能性", LOW_CONFIDENCE: "抽出内容の確認が必要",
         LOW_EVENT_CONFIDENCE: "イベント告知か要確認", NON_EVENT_CANDIDATE: "イベント告知ではない可能性",
         AI_SOURCE_CHANGED: "AI抽出後に原文が更新", FEE_TEXT_INCOMPLETE: "料金区分の記載が不完全",
-        URL_NOT_IN_SOURCE: "原文で確認できないURLは不採用", PDF_PRIMARY: "PDF原本を要確認"};
+        URL_NOT_IN_SOURCE: "原文で確認できないURLは不採用", PDF_PRIMARY: "PDF原本を要確認",
+        PDF_FETCH_FAILED: "PDFを取得できず", PDF_PROCESSING_FAILED: "PDFの解析を要確認",
+        PDF_TEXT_REVIEW_REQUIRED: "PDFの文字読み取りを要確認", OCR_UNAVAILABLE: "画像PDFの文字読み取りが未実施",
+        OCR_TEXT_REVIEW_REQUIRED: "OCRで読んだ日時・金額は原本確認が必要",
+        OCR_FAILED: "画像PDFの文字読み取りに失敗", OCR_PAGE_LIMIT: "PDFの残りページを要確認",
+        INPUT_CONTEXT_TRUNCATED: "長い本文の一部を要確認", PDF_PAGE_LIMIT: "大きなPDFを要確認",
+        PAST_EVENT_CANDIDATE: "終了済みの開催情報（公開前に要確認）"};
       const label = code => labels[code] || (code.endsWith("_EVIDENCE_MISSING") ? "AI抽出の根拠が不足" :
         /_EVIDENCE_(NOT_IN_SOURCE|MISMATCH)$/.test(code) ? "原文と一致しないAI抽出は不採用" :
         code.endsWith("_INVALID") ? "形式が不正なAI抽出は不採用" : "原文の確認が必要");
@@ -609,7 +615,8 @@
         organizer_name:"主催者", organizer_type:"主催区分", format:"開催形式", event_type:"イベント種別",
         genres:"ジャンル", fee_text:"参加費", fee_category:"参加費区分", credits_text:"単位・ポイント",
         audience_conditions:"参加条件", event_date_precision:"時刻の精度", primary_official_url:"公式URL",
-        application_url:"申込URL", is_event:"イベント判定"};
+        application_url:"申込URL", is_event:"イベント判定", venue_name:"会場名",
+        venue_address:"会場住所", venue_prefecture:"開催都道府県"};
       const cards = rows.map(row => {
         const card = el("div", "extraction-item");
         card.append(el("strong", "", labels[row.field_name] || "その他の項目"));
@@ -619,6 +626,11 @@
         card.append(el("p", "", value == null ? "不明・不採用" : Array.isArray(value) ? value.join("、") : String(value)));
         card.append(el("p", "panel-sub", (row.extractor === "ai" ? "AI / " + row.model : "ルール抽出") + " / 確信度 " + Math.round(row.confidence * 100) + "%"));
         if (row.evidence) card.append(el("blockquote", "", row.evidence));
+        if (row.pdf_url) {
+          const link = el("a", "", "PDF原本を見る" + (row.page_from ? `（${row.page_from}${row.page_to > row.page_from ? "～" + row.page_to : ""}ページ）` : ""));
+          link.href = row.pdf_url; link.target = "_blank"; link.rel = "noopener noreferrer";
+          card.append(link);
+        }
         return card;
       });
       document.getElementById("extraction-details").replaceChildren(...(cards.length ? cards : [el("p", "panel-sub", "自動抽出の記録はありません。公式ページを確認してください。") ]));

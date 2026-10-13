@@ -36,9 +36,12 @@ class PublicationWorkflowTest(unittest.TestCase):
         workflow = Path(__file__).parents[1] / ".github/workflows/daily.yml"
         self.assertIn('"site/**"', workflow.read_text())
 
-    def test_daily_ai_has_one_total_budget_and_does_not_upload_private_outputs(self):
+    def test_daily_ai_processes_all_with_pdf_and_does_not_upload_private_outputs(self):
         text = (Path(__file__).parents[1] / ".github/workflows/daily.yml").read_text()
-        self.assertEqual(1, text.count("--max-calls 5"))
+        self.assertEqual(1, text.count("--max-calls 0 --include-pdf"))
+        self.assertNotIn("--max-calls 5", text)
+        self.assertIn("tesseract-ocr-jpn", text)
+        self.assertIn("inputs.collect_all", text)
         self.assertIn("continue-on-error: true", text)
         uploads = text.split("name: Upload bounded run summaries")[1]
         self.assertIn("var/ai-summary.json", uploads)

@@ -493,11 +493,17 @@ function getAdminExtractionDetails(eventId) {
       let value;
       try { value = JSON.parse(row.normalized_value_json || "null"); }
       catch (error) { value = null; }
+      let location = {};
+      try { location = JSON.parse(row.evidence_location || "{}"); }
+      catch (error) { location = {}; }
+      if (!location || typeof location !== "object" || Array.isArray(location)) location = {};
       return {field_name: row.field_name, value: value,
         confidence: Math.max(0, Math.min(1, Number(row.confidence) || 0)),
         extractor: row.extractor === "ai" ? "ai" : "rule",
         model: String(row.model || "").slice(0, 100),
         evidence: String(row.evidence_text || "").slice(0, 300),
+        pdf_url: /^https?:\/\//i.test(String(location.pdf_url || "")) ? location.pdf_url : "",
+        page_from: Number(location.page_from) || 0, page_to: Number(location.page_to) || 0,
         extracted_at: row.extracted_at || ""};
     });
 }

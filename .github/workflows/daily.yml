@@ -12,6 +12,16 @@ on:
         description: "取得するsource_id（カンマ区切り、空なら管理画面で有効にした取得元）"
         required: false
         type: string
+      collect_all:
+        description: "西日本全体を一括取得する（空のsource_idsでも収集を実行）"
+        required: true
+        default: false
+        type: boolean
+      full_detail:
+        description: "初回一括：終了済みを除く発見済み詳細ページをすべて取得"
+        required: true
+        default: false
+        type: boolean
       publish:
         description: "Sheetsから公開サイトを再生成する"
         required: true
@@ -35,6 +45,7 @@ concurrency:
 jobs:
   collect-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     environment: administration
     outputs:
       publish_ready: ${{ steps.public-data.outputs.publish_ready }}
@@ -59,15 +70,18 @@ jobs:
         if: github.event_name == 'push' || inputs.sync_current_events
         run: python -m ce_seminar_finder.cli init-sheet --spreadsheet-id "$CE_SPREADSHEET_ID"
       - name: Install public-page renderer
-        if: github.event_name == 'schedule' || inputs.source_ids != ''
+        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all
         run: |
           npm install --prefix /tmp/ce-browser --no-save playwright
           /tmp/ce-browser/node_modules/.bin/playwright install --with-deps chromium
       - name: Collect explicitly enabled sources
-        if: github.event_name == 'schedule' || inputs.source_ids != ''
+        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all
         env:
           NODE_PATH: /tmp/ce-browser/node_modules
+          FULL_DETAIL: ${{ inputs.full_detail }}
         run: |
+          extra=()
+          if [[ "$FULL_DETAIL" == "true" ]]; then extra+=(--full-detail); fi
           for region in kyushu chugoku-shikoku kansai tokai-hokuriku national; do
             python -m ce_seminar_finder.cli daily-run \
               --region "$region" --use-sheet-sources --render-public-pages \
@@ -77,7 +91,7 @@ jobs:
               --work-directory "var/$region" --max-detail-pages 12 \
               --summary "var/$region/summary.json" \
               --candidates "var/$region/candidates.json" \
-              --markdown-summary "var/$region/summary.md"
+              --markdown-summary "var/$region/summary.md" "${extra[@]}"
           done
       - name: Add run summary
         if: always()
@@ -85,8 +99,11 @@ jobs:
           for summary in var/*/summary.md; do
             if [[ -f "$summary" ]]; then cat "$summary" >> "$GITHUB_STEP_SUMMARY"; fi
           done
-      - name: Refine public candidates with bounded AI (never auto-publish)
-        if: github.event_name == 'schedule' || inputs.source_ids != ''
+      - name: Install Japanese PDF OCR
+        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-jpn tesseract-ocr-eng
+      - name: Refine all public candidates with AI and PDF (never auto-publish)
+        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all
         continue-on-error: true
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -96,7 +113,7 @@ jobs:
             exit 0
           fi
           python -m ce_seminar_finder.cli refine-candidates \
-            --input var/*/candidates.json --max-calls 5 \
+            --input var/*/candidates.json --max-calls 0 --include-pdf \
             --spreadsheet-id "$CE_SPREADSHEET_ID" \
             --output var/ai-refined.json --summary var/ai-summary.json
       - name: Add bounded AI summary

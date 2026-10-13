@@ -135,3 +135,58 @@ class FukuiAdapter(PatternHtmlAdapter):
 
     def enrich_candidate(self, candidate, document):
         return candidate
+
+
+class HyogoOfficialAdapter(PatternHtmlAdapter):
+    """Each h6 is one event; 'past seminars' is a separate archive section."""
+    def __init__(self):
+        super().__init__(detail_patterns=(r"/seminars\.html",))
+
+    def parse(self, source, document):
+        if not document.final_url.split("#")[0].endswith("/seminars.html"):
+            return AdapterResult()
+        soup = BeautifulSoup(document.text(), "html.parser")
+        candidates, past = [], False
+        for node in soup.select("h2,h6"):
+            title = node.get_text(" ", strip=True)
+            if node.name == "h2":
+                if "過去" in title:
+                    past = True
+                continue
+            if past or not is_title_hint(title):
+                continue
+            block = BeautifulSoup("<section></section>", "html.parser").section
+            block.append(BeautifulSoup(str(node), "html.parser"))
+            for sibling in node.next_siblings:
+                if getattr(sibling, "name", None) in {"h2", "h6"}:
+                    break
+                block.append(BeautifulSoup(str(sibling), "html.parser"))
+            candidate = candidate_from_block(source, document, title, block, method="hyogo_pdf_block")
+            if candidate.pdf_urls:
+                candidate = replace(candidate, detail_url=candidate.pdf_urls[0])
+            candidates.append(candidate)
+        return AdapterResult(candidates=_deduplicate_candidates(candidates))
+
+    def enrich_candidate(self, candidate, document): return candidate
+
+
+class WakayamaOfficialAdapter(PatternHtmlAdapter):
+    """A dated PDF link is an event, not all PDFs on the listing page."""
+    def __init__(self):
+        super().__init__(detail_patterns=(r"/seminar\.html",))
+
+    def parse(self, source, document):
+        soup = BeautifulSoup(document.text(), "html.parser")
+        candidates = []
+        for link in soup.select("li a[href]"):
+            title = link.get_text(" ", strip=True)
+            url = urljoin(document.final_url, link["href"])
+            if not is_pdf_url(url) or not is_title_hint(title):
+                continue
+            text = link.parent.get_text("\n", strip=True)
+            candidates.append(EventCandidate(source.source_id, document.final_url, document.final_url,
+                title, pdf_urls=(url,), block_text=text, discovery_method="html_pdf",
+                extracted_fields=extract_rule_values(text, title_hint=title), confidence_hint=.85))
+        return AdapterResult(candidates=_deduplicate_candidates(candidates))
+
+    def enrich_candidate(self, candidate, document): return candidate

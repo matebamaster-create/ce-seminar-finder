@@ -94,6 +94,8 @@ class EventCandidate:
     confidence_hint: float = 0.5
     ai_result: ExtractionResult | None = None
     ai_cache_key: str = ""
+    pdf_documents: tuple[dict, ...] = ()
+    extraction_warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -5,7 +5,7 @@ import re
 import math
 import unicodedata
 from typing import Any, Mapping
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, quote
 
 from ce_seminar_finder.enums import (
     EventFormat,
@@ -41,6 +41,9 @@ KNOWN_FIELDS = {
     "event_end_text",
     "stream_start_text",
     "stream_end_text",
+    "venue_name",
+    "venue_address",
+    "venue_prefecture",
 }
 DATE_FIELDS = {
     "event_start",
@@ -103,12 +106,16 @@ def validate_extraction(
                 value, confidence = None, 0.0
                 reasons.append(f"{name.upper()}_EVIDENCE_MISMATCH")
             elif name in {"title", "organizer", "audience_conditions", "credits_text",
-                          "event_start_text", "event_end_text", "stream_start_text", "stream_end_text"} and _ground_text(str(value)) not in _ground_text(evidence):
+                          "event_start_text", "event_end_text", "stream_start_text", "stream_end_text",
+                          "venue_name", "venue_address", "venue_prefecture"} and _ground_text(str(value)) not in _ground_text(evidence):
                 value, confidence = None, 0.0
                 reasons.append(f"{name.upper()}_EVIDENCE_MISMATCH")
             elif name == "fee_text" and re.search(r"[:：]\s*(?:[、,;；]|$)", str(value)):
                 value, confidence = None, 0.0
                 reasons.append("FEE_TEXT_INCOMPLETE")
+            elif name == "fee_text" and _fee_ground(str(value)) not in _fee_ground(evidence):
+                value, confidence = None, 0.0
+                reasons.append("FEE_TEXT_EVIDENCE_MISMATCH")
             elif name == "fee_category" and value == "無料" and not _free_supported(evidence):
                 value, confidence = None, 0.0
                 reasons.append("FEE_CATEGORY_EVIDENCE_MISMATCH")
@@ -116,6 +123,9 @@ def validate_extraction(
             value = None
             confidence = 0.0
             reasons.append(f"{name.upper()}_INVALID")
+        if value is not None and name in DATE_FIELDS:
+            from .rules import JST
+            value = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(JST).isoformat()
         if value is not None and name in ENUM_VALUES and value not in ENUM_VALUES[name]:
             value = None
             confidence = 0.0
@@ -166,13 +176,16 @@ def _date_supported(value: str, evidence: str, name: str) -> bool:
     date = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(JST)
     normalized = _normalized(evidence)
     for match in DATE_PATTERN.finditer(normalized):
+        prefix = normalized[max(0, match.start()-15):match.start()]
+        if name in {"event_start", "event_end", "stream_start", "stream_end"} and re.search(r"投稿日|掲載日|更新日|公開日", prefix) and not re.search(r"開催|会期|日程|配信", prefix):
+            continue
         if (int(match["year"]), int(match["month"]), int(match["day"])) != (date.year, date.month, date.day):
             continue
         if match["hour"] is not None:
             if int(match["hour"]) != date.hour or int(match["minute"] or 0) != date.minute:
                 # An end time may follow the first date's start time in a range.
                 if name not in {"event_end", "stream_end"} or not re.search(
-                    rf"(?:~|〜|～|-|−|－|–|—|から|to)\s*{date.hour:02d}[:：時]{date.minute:02d}", normalized):
+                    rf"(?:~|〜|～|-|−|－|–|—|から|to)\s*0?{date.hour}[:：時]0?{date.minute}", normalized):
                     continue
         elif (date.hour, date.minute, date.second) not in {(0, 0, 0), (23, 59, 59)}:
             continue
@@ -185,6 +198,12 @@ def _free_supported(evidence: str) -> bool:
     matches = re.findall(r"(?:[¥￥](\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)円)", text)
     amounts = [float(a or b) for a, b in matches]
     return ("無料" in text or any(value == 0 for value in amounts)) and not any(value > 0 for value in amounts)
+
+
+def _fee_ground(value: str) -> str:
+    # Formatting may change; fee amounts must remain tied to the original roles.
+    text = re.sub(r"[￥¥](\d[\d,]*(?:\.\d+)?)", r"\1円", _ground_text(value))
+    return re.sub(r"[,，:：、。・／/;；|]", "", text)
 
 
 def _numbers_supported(value: Any, evidence: str) -> bool:
@@ -217,7 +236,8 @@ def _normalize_url(value: str) -> str:
         or (parsed.scheme == "https" and port == 443)
     ):
         netloc = f"{host}:{port}"
-    return urlunsplit((parsed.scheme.lower(), netloc, parsed.path or "/", parsed.query, ""))
+    return urlunsplit((parsed.scheme.lower(), netloc, quote(parsed.path or "/", safe="/%:@"),
+        quote(parsed.query, safe="=&%/?:@+"), ""))
 
 
 def _confidence(value: Any) -> float:

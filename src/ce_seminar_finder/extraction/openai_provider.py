@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Callable
+from threading import Lock
 
 import certifi
 
@@ -64,11 +65,11 @@ class OpenAIProvider:
     name = "openai"
 
     def __init__(self, api_key: str, *, model: str = DEFAULT_MODEL,
-                 max_requests: int = 5, max_input_chars: int = 40_000,
+                 max_requests: int | None = None, max_input_chars: int = 40_000,
                  transport: Callable | None = None):
         if not api_key.strip():
             raise OpenAIExtractionError("API_KEY_MISSING")
-        if max_requests < 1 or max_input_chars < 100:
+        if (max_requests is not None and max_requests < 1) or max_input_chars < 100:
             raise ValueError("Extraction limits must be positive")
         self._api_key = api_key
         self.model = model
@@ -76,10 +77,9 @@ class OpenAIProvider:
         self.requests = 0
         self.input_tokens = self.output_tokens = 0
         self._transport = transport or self._post
+        self._counter_lock = Lock()
 
     def extract_event(self, request: ExtractionRequest) -> dict:
-        if self.requests >= self.max_requests:
-            raise OpenAIExtractionError("REQUEST_LIMIT_REACHED")
         messages = build_extraction_messages(request)
         if sum(len(item["content"]) for item in messages) > self.max_input_chars:
             raise OpenAIExtractionError("INPUT_LIMIT_REACHED")
@@ -87,7 +87,10 @@ class OpenAIProvider:
                 "reasoning": {"effort": "low"}, "max_output_tokens": 6000,
                 "text": {"format": {"type": "json_schema", "name": "ce_event",
                     "strict": True, "schema": event_response_schema()}}}
-        self.requests += 1
+        with self._counter_lock:
+            if self.max_requests is not None and self.requests >= self.max_requests:
+                raise OpenAIExtractionError("REQUEST_LIMIT_REACHED")
+            self.requests += 1
         try:
             response = self._transport(body)
         except OpenAIExtractionError:
@@ -95,8 +98,9 @@ class OpenAIProvider:
         except Exception:
             raise OpenAIExtractionError("TRANSPORT_ERROR") from None
         usage = response.get("usage") or {}
-        self.input_tokens += int(usage.get("input_tokens") or 0)
-        self.output_tokens += int(usage.get("output_tokens") or 0)
+        with self._counter_lock:
+            self.input_tokens += int(usage.get("input_tokens") or 0)
+            self.output_tokens += int(usage.get("output_tokens") or 0)
         if response.get("status") != "completed":
             raise OpenAIExtractionError("RESPONSE_INCOMPLETE")
         texts = []
