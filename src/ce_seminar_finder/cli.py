@@ -170,6 +170,11 @@ def _parser() -> argparse.ArgumentParser:
     refine.add_argument("--env-file", type=Path)
     refine.add_argument("--cache", type=Path, default=Path("var/ai-cache.json"))
     refine.add_argument("--spreadsheet-id")
+    automatic = subparsers.add_parser("auto-review-sheet", help="承認された公式原文照合ルールで整理・公開します（AI再送なし）")
+    automatic.add_argument("--spreadsheet-id", required=True)
+    automatic.add_argument("--enable-policy", action="store_true", help="所有者が明示承認した西日本31団体の条件付き自動公開を有効化")
+    automatic.add_argument("--dry-run", action="store_true")
+    automatic.add_argument("--summary", type=Path)
     return parser
 
 
@@ -177,6 +182,23 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "plan-sheet":
         print(json.dumps(build_plan().as_dict(), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "auto-review-sheet":
+        from .review.automatic import AutomaticReviewer
+        from .sheets.capacity import ensure_row_capacity
+        if args.dry_run and args.enable_policy:
+            raise ValueError("Dry run cannot enable a policy")
+        service = load_google_service()
+        reviewer = AutomaticReviewer(service, args.spreadsheet_id,
+            ensure_capacity=lambda required: ensure_row_capacity(service, args.spreadsheet_id, required))
+        if args.enable_policy:
+            reviewer.enable_policy()
+        summary = reviewer.run(dry_run=args.dry_run)
+        if args.summary:
+            args.summary.parent.mkdir(parents=True, exist_ok=True)
+            args.summary.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(summary, ensure_ascii=False))
         return 0
 
     if args.command == "init-sheet":

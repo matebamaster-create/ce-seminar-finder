@@ -350,14 +350,22 @@ function getAdminDashboard() {
     result[event.event_id] = event.title;
     return result;
   }, {});
-  const reviews = sheetObjects_(requiredSheet_(spreadsheet, "ReviewQueue"))
+  const openReviews = sheetObjects_(requiredSheet_(spreadsheet, "ReviewQueue"))
     .filter(function (review) {
       return (
         review.review_id &&
         (!review.decision || review.decision === "未判断")
       );
-    })
-    .map(function (review) {
+    });
+  const automaticRule = sheetObjects_(requiredSheet_(spreadsheet, "AutomationRules")).find(function(rule) {
+    return rule.rule_id === "rule_grounded_v1_west20261013";
+  });
+  const processingReviews = openReviews.filter(function(review) {
+    return !automaticRule || String(review.reason_codes || "").trim() === "AUTO_PROCESSING_PENDING";
+  });
+  const reviews = openReviews.filter(function(review) {
+      return !!automaticRule && String(review.reason_codes || "").trim() !== "AUTO_PROCESSING_PENDING";
+    }).map(function (review) {
       return {
         review_id: review.review_id,
         event_id: review.event_id,
@@ -435,11 +443,13 @@ function getAdminDashboard() {
       pending: events.filter(function (event) {
         return event.publication_status === "確認待ち";
       }).length,
-      review: reviews.length,
+      review: automaticRule ? reviews.length : null,
+      processing: processingReviews.length,
       source_errors: sources.filter(function (source) {
         return source.consecutive_failures > 0;
       }).length,
     },
+    automatic_review: {configured: !!automaticRule, enabled: !!automaticRule && truthy_(automaticRule.enabled)},
     connections: {
       github_actions: github.connected,
       github_message: github.message,
@@ -664,6 +674,22 @@ function setSourceEnabledFromAdmin(sourceId, enabled) {
   return {ok: true, message: value ? "日次取得を有効にしました。" : "日次取得を停止しました。"};
 }
 
+function setAutomaticReviewEnabledFromAdmin(enabled) {
+  const actor = requireAdmin_();
+  if (typeof enabled !== "boolean") throw new Error("自動公開の設定が不正です。");
+  const spreadsheet = adminSpreadsheet_();
+  const sheet = requiredSheet_(spreadsheet, "AutomationRules");
+  const row = findRow_(sheet, "rule_id", "rule_grounded_v1_west20261013");
+  if (!row) throw new Error("自動整理の初期設定は一括処理の終了後に反映されます。");
+  setCellByHeader_(sheet, row, "enabled", enabled);
+  appendByHeaders_(requiredSheet_(spreadsheet, "ReviewActions"), {
+    action_id: "act_" + Utilities.getUuid().replace(/-/g, ""), event_id: "",
+    action: enabled ? "auto_review_enable" : "auto_review_disable", actor: actor,
+    acted_at: new Date().toISOString(), note: "承認済みの公式原文照合ルールだけを切り替え",
+  });
+  return {ok: true, message: enabled ? "条件付き自動公開を再開しました。" : "条件付き自動公開を停止しました。"};
+}
+
 function requestSourceUpdateFromAdmin(sourceId) {
   requireAdmin_();
   const spreadsheet = adminSpreadsheet_();
@@ -859,6 +885,7 @@ function adminEvent_(event) {
     "publication_status",
     "review_status",
     "review_label",
+    "review_reason_codes",
     "review_reason_display",
     "duplicate_status",
     "data_quality_score",
@@ -899,6 +926,7 @@ function adminEvent_(event) {
   ].forEach(function (field) {
     result[field] = event[field] || "";
   });
+  result.auto_publish_eligible = truthy_(event.auto_publish_eligible);
   return result;
 }
 

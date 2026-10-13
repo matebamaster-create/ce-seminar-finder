@@ -12,6 +12,41 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class GasAdminTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for JavaScript behavior checks")
+    def test_processing_is_not_counted_as_human_review_and_policy_toggle_is_admin_only(self):
+        script = r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const data = {Events: [{event_id:"evt_one",publication_status:"確認待ち",title:"呼吸セミナー"}],
+  ReviewQueue:[{review_id:"one",event_id:"evt_one",decision:"未判断",reason_codes:"AUTO_PROCESSING_PENDING"},
+  {review_id:"two",event_id:"evt_one",decision:"未判断",reason_codes:"DATE_CONFLICT"}],
+  Sources:[],AutomationRules:[]};
+const writes=[], audit=[];
+const app=vm.createContext({Utilities:{getUuid:()=>"test-id"}});
+vm.runInContext(fs.readFileSync("gas/Code.gs","utf8"),app);
+app.requireAdmin_=()=>"owner"; app.adminActor_=()=>"owner";
+app.adminSpreadsheet_=()=>({getUrl:()=>"https://docs.google.com/spreadsheets/d/test"});
+app.requiredSheet_=(s,n)=>({name:n,getLastRow:()=>1});
+app.sheetObjects_=sheet=>data[sheet.name]||[];
+app.githubWorkflowConnection_=()=>({connected:true,message:"connected"});
+let result=app.getAdminDashboard();
+assert.equal(result.stats.processing,2); assert.equal(result.stats.review,null);
+assert.equal(result.reviews.length,0); assert.equal(result.automatic_review.configured,false);
+data.AutomationRules=[{rule_id:"rule_grounded_v1_west20261013",enabled:true}];
+result=app.getAdminDashboard();
+assert.equal(result.stats.processing,1); assert.equal(result.stats.review,1);
+assert.equal(result.reviews[0].reason_codes,"DATE_CONFLICT");
+app.findRow_=()=>2; app.setCellByHeader_=(...args)=>writes.push(args);
+app.appendByHeaders_=(s,row)=>audit.push(row);
+app.requireAdmin_=()=>{throw Error("denied")};
+assert.throws(()=>app.setAutomaticReviewEnabledFromAdmin(false),/denied/); assert.equal(writes.length,0);
+app.requireAdmin_=()=>"owner";
+assert.throws(()=>app.setAutomaticReviewEnabledFromAdmin("false"),/不正/);
+app.setAutomaticReviewEnabledFromAdmin(false); assert.equal(writes[0][3],false);
+assert.equal(audit[0].action,"auto_review_disable");
+app.findRow_=()=>null; assert.throws(()=>app.setAutomaticReviewEnabledFromAdmin(true),/初期設定/);
+'''
+        subprocess.run([shutil.which("node"), "-e", script], cwd=ROOT, check=True, capture_output=True, text=True)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for JavaScript behavior checks")
     def test_extraction_details_are_admin_only_and_filter_other_events_and_columns(self):
         script = r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
@@ -133,6 +168,7 @@ assert.doesNotMatch(ui.shortDate("2026-11-01T00:00:00+09:00", "date"), /00:00/);
 assert.equal(ui.sourceMessageText("0件 / PUBLIC_SEMINAR_LIST_EMPTY"), "0件 / 公開セミナー欄は0件");
 const now = Date.parse("2026-10-13T00:00:00+09:00");
 assert.equal(ui.isUpcomingEvent({event_start_at: "2026-10-12T10:00:00+09:00"}, now), false);
+assert.equal(ui.isUpcomingEvent({format:"Web", event_start_at:"2026-06-07T10:00:00+09:00", stream_end_at:"2026-11-01T00:00:00+09:00", effective_end_at:"2026-11-01T00:00:00+09:00"}, now),false);
 assert.equal(ui.isUpcomingEvent({stream_start_at: "2026-09-01T00:00:00+09:00", stream_end_at: "2026-11-01T00:00:00+09:00"}, now), true);
 assert.equal(ui.isUpcomingEvent({publication_status: "アーカイブ", event_start_at: "2026-11-01T00:00:00+09:00"}, now), false);
 assert.equal(ui.isUpcomingEvent({}, now), false);

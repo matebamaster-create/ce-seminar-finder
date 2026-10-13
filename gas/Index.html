@@ -72,7 +72,7 @@
     .content { padding: 26px 28px 50px; }
     .view { display: none; }
     .view.active { display: block; }
-    .stats { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 14px; }
+    .stats { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)); gap: 14px; }
     .stat, .panel {
       background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow);
     }
@@ -224,6 +224,11 @@
       <div class="content">
         <section class="view active" id="view-dashboard">
           <div class="stats" id="stats"></div>
+          <div class="panel" style="margin-top:14px">
+            <div class="panel-head"><div><h2>自動整理・公開</h2><p class="panel-sub" id="automatic-review-status">設定を確認中…</p></div>
+              <button class="button secondary small" id="automatic-review-button" disabled>自動公開を停止</button>
+            </div>
+          </div>
           <div class="panel">
             <div class="panel-head">
               <div><h2>優先して確認する項目</h2><p class="panel-sub">重要な変更を優先して確認します。</p></div>
@@ -255,7 +260,7 @@
         </section>
         <section class="view" id="view-reviews">
           <div class="panel" style="margin-top:0">
-            <div class="panel-head"><div><h2>要確認キュー</h2><p class="panel-sub">公開前に人の確認が必要な項目です。</p></div></div>
+            <div class="panel-head"><div><h2>人の確認が必要な項目</h2><p class="panel-sub">原文の食い違い・読み取り不良・曖昧な重複など、自動で解消できない項目だけを残します。</p></div></div>
             <div class="review-list" id="reviews-list"></div>
           </div>
         </section>
@@ -375,6 +380,11 @@
     document.getElementById("event-status").addEventListener("change", renderEvents);
     document.getElementById("event-prefecture").addEventListener("change", renderEvents);
     document.getElementById("publish-button").addEventListener("click", publishSite);
+    document.getElementById("automatic-review-button").addEventListener("click", () => {
+      const enabled = !state.data.automatic_review?.enabled;
+      google.script.run.withSuccessHandler(result => { showToast(result.message); loadData(); })
+        .withFailureHandler(handleError).setAutomaticReviewEnabledFromAdmin(enabled);
+    });
     document.getElementById("connection-button").addEventListener("click", openConnection);
     document.getElementById("cancel-connection").addEventListener("click", closeConnection);
     document.getElementById("save-connection").addEventListener("click", saveConnection);
@@ -418,8 +428,9 @@
       const values = [
         ["登録イベント", state.data.stats.total],
         ["公開中", state.data.stats.published],
-        ["公開待ち", state.data.stats.pending],
-        ["要確認", state.data.stats.review],
+        ["未公開候補", state.data.stats.pending],
+        ["自動処理待ち", state.data.stats.processing || 0],
+        ["人の確認が必要", state.data.automatic_review?.configured ? state.data.stats.review : "判定中"],
         ["取得エラー", state.data.stats.source_errors],
       ];
       const root = document.getElementById("stats");
@@ -428,6 +439,14 @@
         card.append(el("small", "", label), el("strong", "", String(value)));
         return card;
       }));
+      const automatic = state.data.automatic_review || {};
+      document.getElementById("automatic-review-status").textContent = !automatic.configured
+        ? "初期設定待ちです。一括処理の終了後、既存の確認案件を公式原文と照合して再判定します。"
+        : automatic.enabled ? "公式原文で日時・料金などを確認できた候補を自動公開します。判断理由と変更履歴は保存されます。"
+        : "条件付き自動公開は停止中です。収集とAI補足は継続します。";
+      const automaticButton = document.getElementById("automatic-review-button");
+      automaticButton.disabled = !automatic.configured;
+      automaticButton.textContent = !automatic.configured ? "自動公開の準備中" : automatic.enabled ? "自動公開を停止" : "自動公開を再開";
     }
 
     function fillFilters() {
@@ -461,7 +480,7 @@
             textCell(shortDate(event.event_start_at || event.stream_start_at, event.event_date_precision)),
             textCell(event.source_prefecture || "—"),
             badgeCell(event.publication_status),
-            badgeCell(event.review_label === "あり" ? "要確認" : "確認済み"),
+            badgeCell(String(event.review_reason_codes || "").includes("AUTO_PROCESSING_PENDING") ? "自動処理待ち" : event.review_label === "あり" ? "要確認" : event.auto_publish_eligible ? "自動確認済み" : "確認済み"),
           ]
         : [
             titleCell(event),
@@ -489,7 +508,12 @@
     function isUpcomingEvent(event, now = Date.now()) {
       if (event.publication_status === "アーカイブ" || event.publication_status === "非公開") return false;
       const start = Date.parse(event.event_start_at || event.stream_start_at || "");
-      const end = Date.parse(event.effective_end_at || event.stream_end_at || event.event_end_at || event.event_start_at || "");
+      const streaming = event.format === "オンデマンド" || !event.event_start_at && !!event.stream_start_at;
+      let end = Date.parse(streaming ? event.stream_end_at || event.effective_end_at || event.stream_start_at || ""
+        : event.event_end_at || event.event_start_at || "");
+      if (!streaming && event.event_date_precision === "date" && !event.event_end_at && Number.isFinite(start)) {
+        const dayEnd = new Date(start); dayEnd.setHours(23, 59, 59, 999); end = dayEnd.getTime();
+      }
       return Number.isFinite(start) && Number.isFinite(end) && end >= now;
     }
 
@@ -507,7 +531,13 @@
         OCR_FAILED: "画像PDFの文字読み取りに失敗", OCR_PAGE_LIMIT: "PDFの残りページを要確認",
         INPUT_CONTEXT_TRUNCATED: "長い本文の一部を要確認", PDF_PAGE_LIMIT: "大きなPDFを要確認",
         PAST_EVENT_CANDIDATE: "終了済みの開催情報（公開前に要確認）"};
-      const label = code => labels[code] || (code.endsWith("_EVIDENCE_MISSING") ? "AI抽出の根拠が不足" :
+      const automaticFields = {TITLE: "イベント名", ORGANIZER_NAME: "主催者", FORMAT: "開催形式", FEE_TEXT: "参加費",
+        EVENT_START_AT: "開催日時", STREAM_START_AT: "配信開始", STREAM_END_AT: "配信終了"};
+      Object.assign(labels, {AUTO_PROCESSING_PENDING: "自動処理待ち", SOURCE_FIELD_CONFLICT: "掲載元どうしで日時・料金などが不一致",
+        SOURCE_TEXT_UNAVAILABLE: "公式本文を取得できず", SOURCE_SNAPSHOT_INVALID: "保存原文の整合性を要確認",
+        EVENT_CLASSIFICATION_CONFLICT: "イベント告知か判断が分かれる", OFFICIAL_URL_UNVERIFIED: "公式URLの根拠を要確認",
+        DATE_CONFLICT: "開催日時・終了日時の根拠が不一致", DATE_OUTSIDE_NORMAL_RANGE: "開催年の確認が必要"});
+      const label = code => labels[code] || (/^AUTO_.+_UNVERIFIED$/.test(code) ? (automaticFields[code.slice(5,-11)] || "取得項目") + "の公式原文・PDFを要確認" : code.endsWith("_EVIDENCE_MISSING") ? "AI抽出の根拠が不足" :
         /_EVIDENCE_(NOT_IN_SOURCE|MISMATCH)$/.test(code) ? "原文と一致しないAI抽出は不採用" :
         code.endsWith("_INVALID") ? "形式が不正なAI抽出は不採用" : "原文の確認が必要");
       return [...new Set(String(value || "").split(/[\s,]+/).filter(Boolean).map(label))].join("・");
@@ -536,8 +566,10 @@
     function renderReviews() {
       const reviewCards = state.data.reviews.map(review => reviewCard(review));
       const dashboardCards = state.data.reviews.slice(0, 4).map(review => reviewCard(review));
-      document.getElementById("reviews-list").replaceChildren(...(reviewCards.length ? reviewCards : [el("p", "empty", "現在、要確認項目はありません。")]));
-      document.getElementById("dashboard-reviews").replaceChildren(...(dashboardCards.length ? dashboardCards : [el("p", "empty", "現在、要確認項目はありません。")]));
+      const emptyText = state.data.automatic_review?.configured ? "現在、人の確認が必要な項目はありません。"
+        : "一括処理の終了後、人の確認が必要なものを自動で再判定します。";
+      document.getElementById("reviews-list").replaceChildren(...(reviewCards.length ? reviewCards : [el("p", "empty", emptyText)]));
+      document.getElementById("dashboard-reviews").replaceChildren(...(dashboardCards.length ? dashboardCards : [el("p", "empty", emptyText)]));
     }
 
     function reviewCard(review) {

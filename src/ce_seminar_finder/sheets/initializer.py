@@ -237,9 +237,9 @@ def _write_headers_and_settings(service: Any, spreadsheet_id: str) -> None:
                         "values": [list(row[:8])],
                     },
                     {
-                        "range": f"'Sources'!J{sheet_row}:O{sheet_row}",
+                        "range": f"'Sources'!K{sheet_row}:O{sheet_row}",
                         "majorDimension": "ROWS",
-                        "values": [list(row[9:15])],
+                        "values": [list(row[10:15])],
                     },
                 )
             )
