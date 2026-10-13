@@ -96,6 +96,18 @@ class SiteBuilderTest(unittest.TestCase):
         self.assertIn('rel="noopener"', combined)
         self.assertNotIn("絶対に公開しない", combined)
 
+    def test_legacy_string_genre_is_rendered_as_one_tag(self) -> None:
+        payload = self.payload()
+        payload["events"][0]["genres"] = "血液浄化"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "events.json"
+            data.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            build_static_site(data, root / "site")
+            listing = (root / "site/events/index.html").read_text(encoding="utf-8")
+        self.assertIn('<span class="tag">血液浄化</span>', listing)
+        self.assertNotIn('<span class="tag">血</span>', listing)
+
 
 if __name__ == "__main__":
     unittest.main()

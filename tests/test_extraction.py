@@ -231,6 +231,31 @@ class RulesPromptCacheTest(unittest.TestCase):
             values["application_url"].value,
         )
 
+    def test_rules_extract_fcet_detail_table_fields(self) -> None:
+        text = (
+            "開催日時\t2026（令和8）年7月16日（木曜日） 18:30〜20:20\n"
+            "参加費\t会員（日臨工・賛助会員含む）：1,000円、"
+            "非会員：2,000円、学生：500円\n"
+            "参加定員\t\n"
+            "申込締め切り\t2026（令和8）年7月14日 （火曜日）\n"
+            "お申込み先\thttps://user.medifull.jp/event-top"
+        )
+        values = extract_rule_values(
+            text,
+            allowed_urls=("https://user.medifull.jp/event-top",),
+        )
+        self.assertEqual(
+            "2026-07-16T18:30:00+09:00",
+            values["event_start"].value,
+        )
+        self.assertEqual("有料", values["fee_category"].value)
+        self.assertIn("非会員：2,000円", values["fee_text"].value)
+        self.assertEqual(
+            "2026-07-14T23:59:00+09:00",
+            values["application_deadline_at"].value,
+        )
+        self.assertNotIn("capacity_text", values)
+
     def test_prompt_keeps_page_instructions_inside_untrusted_data(self) -> None:
         poisoned = ExtractionRequest(
             source_id="src_test",

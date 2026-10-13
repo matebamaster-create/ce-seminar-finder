@@ -214,6 +214,11 @@ def main(argv: list[str] | None = None) -> int:
                     "pdf_urls": list(item.pdf_urls),
                     "published_at": item.published_at,
                     "discovery_method": item.discovery_method,
+                    "block_text": item.block_text,
+                    "extracted_fields": {
+                        key: value.as_dict()
+                        for key, value in item.extracted_fields.items()
+                    },
                     "confidence_hint": item.confidence_hint,
                 }
                 for item in result.candidates

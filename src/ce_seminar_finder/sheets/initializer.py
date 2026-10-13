@@ -9,6 +9,7 @@ from .schema import (
     FIELD_GUIDE_ROWS,
     SETTINGS_ROWS,
     SHEET_SPECS,
+    SOURCES_HEADERS,
     SOURCE_ROWS,
     settings_ranges,
 )
@@ -196,7 +197,17 @@ def _write_headers_and_settings(service: Any, spreadsheet_id: str) -> None:
                 "values": [list(row) for row in SETTINGS_ROWS],
             }
         )
-    if _range_is_empty(service, spreadsheet_id, "'Sources'!A2"):
+    source_values = (
+        service.spreadsheets()
+        .values()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'Sources'!A2:X",
+        )
+        .execute()
+        .get("values", [])
+    )
+    if not source_values:
         data.append(
             {
                 "range": "'Sources'!A2",
@@ -204,6 +215,47 @@ def _write_headers_and_settings(service: Any, spreadsheet_id: str) -> None:
                 "values": [list(row) for row in SOURCE_ROWS],
             }
         )
+    else:
+        existing_rows = {
+            str(row[0]): index
+            for index, row in enumerate(source_values, start=2)
+            if row and row[0]
+        }
+        missing: list[list[object]] = []
+        for row in SOURCE_ROWS:
+            sheet_row = existing_rows.get(str(row[0]))
+            if sheet_row is None:
+                missing.append(list(row))
+                continue
+            # Refresh catalog-owned columns, while preserving the operator's
+            # enabled flag and all runtime/status columns in the live sheet.
+            data.extend(
+                (
+                    {
+                        "range": f"'Sources'!A{sheet_row}:H{sheet_row}",
+                        "majorDimension": "ROWS",
+                        "values": [list(row[:8])],
+                    },
+                    {
+                        "range": f"'Sources'!J{sheet_row}:O{sheet_row}",
+                        "majorDimension": "ROWS",
+                        "values": [list(row[9:15])],
+                    },
+                )
+            )
+        if missing:
+            start_row = len(source_values) + 2
+            end_row = start_row + len(missing) - 1
+            data.append(
+                {
+                    "range": (
+                        f"'Sources'!A{start_row}:"
+                        f"{_column_letter(len(SOURCES_HEADERS))}{end_row}"
+                    ),
+                    "majorDimension": "ROWS",
+                    "values": missing,
+                }
+            )
     if _range_is_empty(service, spreadsheet_id, "'項目ガイド'!A2"):
         data.append(
             {

@@ -15,7 +15,7 @@ on:
         default: false
         type: boolean
       sync_current_events:
-        description: "リポジトリの確認済みイベント6件をEventsへ同期する"
+        description: "リポジトリの確認済みイベントをEventsへ同期する"
         required: true
         default: false
         type: boolean

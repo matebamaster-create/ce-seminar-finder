@@ -32,13 +32,95 @@ def document(
     )
 
 
+def text_document(
+    text: str,
+    final_url: str,
+    *,
+    content_type: str = "text/html",
+) -> FetchResponse:
+    return FetchResponse(
+        url=final_url,
+        final_url=final_url,
+        status_code=200,
+        headers={"content-type": content_type},
+        body=text.encode("utf-8"),
+        fetched_at=datetime.now(UTC),
+        content_hash="inline-fixture",
+        encoding="utf-8",
+    )
+
+
 class AdapterTest(unittest.TestCase):
-    def test_all_nine_sources_have_adapters(self) -> None:
+    def test_all_twenty_four_sources_have_adapters(self) -> None:
         configs = source_configs()
-        self.assertEqual(9, len(configs))
+        self.assertEqual(24, len(configs))
         for config in configs:
             with self.subTest(source=config.source_id):
                 self.assertIsNotNone(adapter_for_source(config.source_id))
+
+    def test_chugoku_shikoku_and_kansai_adapters_find_event_links(self) -> None:
+        cases = [
+            ("src_tottori", "https://t-ce.org/2026/07/respiratory-seminar/"),
+            ("src_shimane", "https://shimane-ce.jp/seminardetail?sid=21"),
+            ("src_okayama", "https://www.okacet.or.jp/?p=6753"),
+            ("src_hiroshima", "https://hiroshima-acet.jp/seminardetail?sid=15"),
+            ("src_tokushima", "https://www.tokushimace.com/topicsdetail.php?id=99"),
+            ("src_kagawa", "https://www.kagawa-rinkou.com/meeting/detail.html"),
+            ("src_ehime", "https://ehimeces.or.jp/archives/11614"),
+            ("src_kochi", "https://www.kochi-ce.com/news_detail72.html"),
+            ("src_shiga", "https://www.sacet.jp/respiratory-seminar/"),
+            ("src_kyoto", "https://kcet.jp/?p=902"),
+            ("src_osaka", "https://osakace.com/archives/42769"),
+            ("src_hyogo", "https://hce.umin.jp/pdf/seminer/respiratory.pdf"),
+            ("src_wakayama", "https://wce-rinkou.org/pdf/news/20260410.pdf"),
+        ]
+        for source_id, detail_url in cases:
+            with self.subTest(source=source_id):
+                html = (
+                    '<a href="{}">第10回 呼吸療法セミナー</a>'
+                    '<a href="/recruit.html">求人情報</a>'
+                ).format(detail_url)
+                result = adapter_for_source(source_id).parse(
+                    source_config(source_id),
+                    text_document(html, source_config(source_id).base_url),
+                )
+                self.assertEqual(1, len(result.candidates))
+                candidate = result.candidates[0]
+                if detail_url.endswith(".pdf"):
+                    self.assertIn(detail_url, candidate.pdf_urls)
+                else:
+                    self.assertEqual(detail_url, candidate.detail_url)
+
+    def test_nara_filters_national_feed_by_prefecture(self) -> None:
+        rss = """<?xml version="1.0" encoding="UTF-8"?>
+        <rss><channel>
+          <item><title>【奈良県】第23回人工呼吸器安全セミナー</title>
+            <link>https://ja-ces.or.jp/gakkai/nara-respiratory/</link>
+            <description>一般社団法人奈良県臨床工学技士会 主催</description></item>
+          <item><title>【東京都】血液浄化セミナー</title>
+            <link>https://ja-ces.or.jp/gakkai/tokyo-dialysis/</link>
+            <description>東京都開催</description></item>
+        </channel></rss>"""
+        result = adapter_for_source("src_nara").parse(
+            source_config("src_nara"),
+            text_document(
+                rss,
+                "https://ja-ces.or.jp/category/gakkai/feed/",
+                content_type="application/rss+xml",
+            ),
+        )
+        self.assertEqual(1, len(result.candidates))
+        self.assertIn("奈良県", result.candidates[0].title_hint)
+
+    def test_yamaguchi_nuxt_shell_is_technical_hold(self) -> None:
+        result = adapter_for_source("src_yamaguchi").parse(
+            source_config("src_yamaguchi"),
+            text_document(
+                '<div id="__nuxt"><div>Loading...</div></div>',
+                "https://yamaguchi-ces.medikiki-hp1.com/seminars",
+            ),
+        )
+        self.assertEqual("CLIENT_RENDER_REQUIRED", result.technical_hold_reason)
 
     def test_html_adapters_find_expected_candidates(self) -> None:
         cases = [

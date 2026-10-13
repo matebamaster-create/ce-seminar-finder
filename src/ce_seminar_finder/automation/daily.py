@@ -162,6 +162,10 @@ def write_daily_outputs(
                     "published_at": item.published_at,
                     "discovery_method": item.discovery_method,
                     "block_text": item.block_text,
+                    "extracted_fields": {
+                        key: value.as_dict()
+                        for key, value in item.extracted_fields.items()
+                    },
                     "confidence_hint": item.confidence_hint,
                 }
                 for item in summary.candidates

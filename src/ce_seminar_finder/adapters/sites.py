@@ -155,7 +155,7 @@ class JaceAdapter(PatternHtmlAdapter):
         )
 
 
-class OkinawaAdapter(PatternHtmlAdapter):
+class _MedikikiNuxtAdapter(PatternHtmlAdapter):
     def __init__(self) -> None:
         super().__init__(
             detail_patterns=(r"/seminars(?:/|$)", r"/seminars-history", r"/notice")
@@ -200,6 +200,151 @@ class OkinawaAdapter(PatternHtmlAdapter):
             except ET.ParseError:
                 pass
         return super().parse(source, document)
+
+
+class OkinawaAdapter(_MedikikiNuxtAdapter):
+    pass
+
+
+class TottoriAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(
+                r"/category/news/organize/",
+                r"/category/seminar/",
+                r"/wp-content/uploads/",
+            ),
+            include_event_text_links=True,
+        )
+
+
+class ShimaneAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"/seminardetail", r"/infodetail"),
+            include_event_text_links=True,
+        )
+
+
+class OkayamaAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"\?p=\d+", r"/\d{4}/\d{2}/"),
+            include_event_text_links=True,
+        )
+
+
+class HiroshimaAdapter(ShimaneAdapter):
+    """Hiroshima currently uses the same proprietary CMS as Shimane."""
+
+
+class YamaguchiAdapter(_MedikikiNuxtAdapter):
+    """Yamaguchi uses the same client-rendered Medikiki platform as Okinawa."""
+
+
+class TokushimaAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"/topics(?:detail)?\.php", r"/wp/wp-content/uploads/"),
+            include_event_text_links=True,
+        )
+
+
+class KagawaAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"/meeting/", r"/news/", r"/pdf/"),
+            include_event_text_links=True,
+        )
+
+
+class EhimeAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"/archives/\d+", r"/wp-content/uploads/"),
+            include_event_text_links=True,
+        )
+
+
+class KochiAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"/news_detail\d+\.html", r"/up/"),
+            include_event_text_links=True,
+        )
+
+
+class ShigaAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"/category/seminar/", r"/wp-content/uploads/"),
+            include_event_text_links=True,
+        )
+
+
+class KyotoAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"\?p=\d+", r"/\d{4}/\d{2}/", r"/wp-content/uploads/"),
+            include_event_text_links=True,
+        )
+
+
+class OsakaAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"/archives/\d+", r"/wp-content/uploads/"),
+            include_event_text_links=True,
+        )
+
+
+class HyogoAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"/seminars\.html", r"/pdf/"),
+            include_event_text_links=True,
+        )
+
+
+class NaraAdapter(PatternHtmlAdapter):
+    """Use the national association's official feed as Nara's public fallback."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"/gakkai/",),
+            include_event_text_links=True,
+        )
+
+    def parse(
+        self,
+        source: SourceConfig,
+        document: FetchResponse,
+    ) -> AdapterResult:
+        result = super().parse(source, document)
+        prefecture = source.prefecture
+        candidates = tuple(
+            candidate
+            for candidate in result.candidates
+            if prefecture in f"{candidate.title_hint} {candidate.block_text}"
+        )
+        return AdapterResult(
+            candidates=candidates,
+            discovered_urls=result.discovered_urls,
+            pdf_urls=result.pdf_urls,
+            warnings=result.warnings
+            + (
+                "県独自の安定した公開一覧がないため日臨工公式情報を県名で抽出",
+            ),
+            technical_hold_reason=result.technical_hold_reason,
+        )
+
+
+class WakayamaAdapter(PatternHtmlAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            detail_patterns=(r"/seminar\.html", r"/pdf/news/"),
+            include_event_text_links=True,
+        )
 
 
 def _heading_candidates(

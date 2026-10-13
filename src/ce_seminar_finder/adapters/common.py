@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
+from ce_seminar_finder.extraction.rules import extract_rule_values
+
 from ce_seminar_finder.collection.models import (
     AdapterResult,
     EventCandidate,
@@ -473,12 +475,24 @@ class PatternHtmlAdapter:
         candidate: EventCandidate,
         document: FetchResponse,
     ) -> EventCandidate:
+        links = html_links(document)
         pdfs = [
             urljoin(document.final_url, link.href)
-            for link in html_links(document)
+            for link in links
             if link.href and is_pdf_url(urljoin(document.final_url, link.href))
         ]
+        allowed_urls = tuple(
+            dict.fromkeys(
+                urljoin(document.final_url, link.href)
+                for link in links
+                if link.href
+            )
+        )
         page_title, body = page_text(document)
+        extracted_fields = extract_rule_values(
+            body,
+            allowed_urls=allowed_urls,
+        )
         title = candidate.title_hint
         if page_title and is_event_like(page_title):
             title = page_title
@@ -491,6 +505,7 @@ class PatternHtmlAdapter:
             published_at=candidate.published_at,
             discovery_method=candidate.discovery_method,
             block_text=body[:4000],
+            extracted_fields=extracted_fields,
             confidence_hint=max(candidate.confidence_hint, 0.8),
         )
 

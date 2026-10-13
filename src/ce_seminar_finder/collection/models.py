@@ -5,6 +5,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Mapping
 
+from ce_seminar_finder.extraction.models import ExtractedField
+
 
 class FetchOutcome(StrEnum):
     FETCHED = "fetched"
@@ -88,6 +90,7 @@ class EventCandidate:
     published_at: str | None = None
     discovery_method: str = "html"
     block_text: str = ""
+    extracted_fields: Mapping[str, ExtractedField] = field(default_factory=dict)
     confidence_hint: float = 0.5
 
 
@@ -146,4 +149,3 @@ class SourceRunResult:
     logs: list[FetchLogEntry] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     fetched_urls: list[str] = field(default_factory=list)
-
