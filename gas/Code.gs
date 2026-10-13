@@ -419,6 +419,7 @@ function getAdminDashboard() {
       : 2;
     return aOrder - bOrder;
   });
+  const github = githubWorkflowConnection_();
   return {
     generated_at: new Date().toISOString(),
     actor: adminActor_(),
@@ -440,9 +441,8 @@ function getAdminDashboard() {
       }).length,
     },
     connections: {
-      github_actions: Boolean(
-        PropertiesService.getScriptProperties().getProperty("GITHUB_TOKEN")
-      ),
+      github_actions: github.connected,
+      github_message: github.message,
     },
     options: {
       publication_statuses: ["公開", "非公開", "確認待ち", "アーカイブ"],
@@ -655,6 +655,33 @@ function publishAdminSite() {
     ok: true,
     message: "公開ページの更新を依頼しました。通常1〜3分で反映されます。",
   };
+}
+
+function githubWorkflowConnection_() {
+  const properties = PropertiesService.getScriptProperties();
+  const owner = properties.getProperty("GITHUB_OWNER");
+  const repository = properties.getProperty("GITHUB_REPOSITORY");
+  const token = properties.getProperty("GITHUB_TOKEN");
+  if (!owner || !repository || !token) {
+    return {connected: false, message: "GitHub公開更新の接続設定がありません。"};
+  }
+  try {
+    const response = UrlFetchApp.fetch(
+      "https://api.github.com/repos/" + encodeURIComponent(owner) + "/" +
+      encodeURIComponent(repository) + "/actions/workflows/daily.yml", {
+        headers: {Accept: "application/vnd.github+json", Authorization: "Bearer " + token,
+          "X-GitHub-Api-Version": "2022-11-28"},
+        muteHttpExceptions: true,
+      });
+    const status = response.getResponseCode();
+    if (status === 200) return {connected: true, message: "GitHub接続確認済み。起動権限は更新実行時に確認します。"};
+    return {connected: false, message: status === 401
+      ? "GitHub接続の認証期限切れ、または無効な認証情報です。接続の更新が必要です。"
+      : "GitHub接続を確認できません（HTTP " + status + "）。権限・接続先を確認してください。"};
+  } catch (error) {
+    // Do not return fetch error details or credentials to the browser.
+    return {connected: false, message: "GitHubへの接続を確認できませんでした。時間をおいて再読み込みしてください。"};
+  }
 }
 
 function dispatchDailyWorkflow_(sourceIds, publish) {

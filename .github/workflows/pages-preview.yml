@@ -1,22 +1,10 @@
-name: Publish sample site
+name: Build sample preview (no production deployment)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "site/**"
-      - ".github/workflows/pages-preview.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: ce-seminar-finder-pages
-  cancel-in-progress: true
 
 jobs:
   build:
@@ -28,20 +16,9 @@ jobs:
           mkdir -p public
           cp -R site/. public/
           ! grep -R -E 'admin_note|auto_values|FieldOverrides|ReviewQueue' public
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload downloadable sample preview
+        uses: actions/upload-artifact@v4
         with:
+          name: sample-preview-not-production
           path: public
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          retention-days: 7

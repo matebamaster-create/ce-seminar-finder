@@ -221,7 +221,7 @@
           <div class="stats" id="stats"></div>
           <div class="panel">
             <div class="panel-head">
-              <div><h2>優先して確認する項目</h2><p class="panel-sub">締切や開催日が近い順に確認します。</p></div>
+              <div><h2>優先して確認する項目</h2><p class="panel-sub">重要な変更を優先して確認します。</p></div>
               <button class="button secondary small" data-go="reviews">すべて見る</button>
             </div>
             <div class="review-list" id="dashboard-reviews"></div>
@@ -375,9 +375,7 @@
       publishButton.textContent = state.data.connections.github_actions
         ? "公開ページを更新"
         : "公開更新（GitHub接続待ち）";
-      publishButton.title = state.data.connections.github_actions
-        ? ""
-        : "GitHub操作用トークンを設定すると有効になります。";
+      publishButton.title = state.data.connections.github_message || "GitHubの接続設定を確認してください。";
       renderStats();
       fillFilters();
       renderEvents();
@@ -454,7 +452,24 @@
 
     function renderDashboardEvents() {
       const root = document.getElementById("dashboard-events");
-      root.replaceChildren(...state.data.events.filter(event => event.publication_status !== "アーカイブ").slice(0, 7).map(event => eventRow(event, true)));
+      root.replaceChildren(...state.data.events.filter(event => isUpcomingEvent(event))
+        .sort((a, b) => new Date(a.event_start_at || a.stream_start_at) - new Date(b.event_start_at || b.stream_start_at))
+        .slice(0, 7).map(event => eventRow(event, true)));
+    }
+
+    function isUpcomingEvent(event, now = Date.now()) {
+      if (event.publication_status === "アーカイブ" || event.publication_status === "非公開") return false;
+      const start = Date.parse(event.event_start_at || event.stream_start_at || "");
+      const end = Date.parse(event.effective_end_at || event.stream_end_at || event.event_end_at || event.event_start_at || "");
+      return Number.isFinite(start) && Number.isFinite(end) && end >= now;
+    }
+
+    function reviewReasonText(value) {
+      const labels = {DATE_UNKNOWN: "開催日が不明", ORGANIZER_UNKNOWN: "主催者が不明",
+        FORMAT_UNKNOWN: "開催形式が不明", DEADLINE_UNKNOWN: "申込締切が不明", FEE_UNKNOWN: "参加費が不明",
+        HIGH_IMPACT_FIELD_CHANGED: "公開情報に重要な変更あり", ADMIN_REVIEW_REQUIRED: "管理者の確認が必要",
+        DUPLICATE_CANDIDATE: "同じイベントの可能性", LOW_CONFIDENCE: "抽出内容の確認が必要"};
+      return String(value || "").split(/[\s,]+/).filter(Boolean).map(code => labels[code] || code).join("・");
     }
 
     function renderEvents() {
@@ -482,7 +497,7 @@
       const body = document.createElement("div");
       body.append(badge(review.priority, review.priority === "緊急" ? "error" : "warning"));
       body.append(el("h3", "", review.event_title));
-      body.append(el("p", "", review.reason_codes || review.uncertain_fields || "詳細を確認してください。"));
+      body.append(el("p", "", reviewReasonText(review.reason_codes) || "詳細を確認してください。"));
       if (review.source_excerpt) body.append(el("p", "", review.source_excerpt));
       const actions = el("div", "review-actions");
       const edit = el("button", "button secondary small", "内容を確認");
@@ -611,7 +626,7 @@
     function badgeCell(text) { const td = document.createElement("td"); td.append(badge(text, text === "公開" || text === "稼働中" || text === "確認済み" ? "published" : text === "確認待ち" || text === "要確認" || text === "あり" ? "warning" : "")); return td; }
     function badge(text, tone = "") { return el("span", "badge " + tone, text || "—"); }
     function formatDate(value) { if (!value) return "未取得"; const date = new Date(value); return isNaN(date) ? value : date.toLocaleString("ja-JP"); }
-    function shortDate(value) { if (!value) return "要確認"; const date = new Date(value); return isNaN(date) ? value : `${date.getMonth()+1}月${date.getDate()}日 ${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`; }
+    function shortDate(value) { if (!value) return "要確認"; const date = new Date(value); return isNaN(date) ? value : `${date.getFullYear()}年${date.getMonth()+1}月${date.getDate()}日 ${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`; }
     loadData();
   </script>
 </body>

@@ -23,6 +23,20 @@ class Execute:
     def execute(self): return self.value
 
 
+class PublicationWorkflowTest(unittest.TestCase):
+    def test_sample_preview_cannot_overwrite_production(self):
+        workflow = Path(__file__).parents[1] / ".github/workflows/pages-preview.yml"
+        text = workflow.read_text()
+        self.assertNotIn("deploy-pages", text)
+        self.assertNotIn("pages: write", text)
+        self.assertNotIn("  push:", text)
+        self.assertIn("actions/upload-artifact@", text)
+
+    def test_frontend_changes_trigger_real_sheet_publication(self):
+        workflow = Path(__file__).parents[1] / ".github/workflows/daily.yml"
+        self.assertIn('"site/**"', workflow.read_text())
+
+
 class FakeSheets:
     def __init__(self):
         self.tables = {spec.title: [list(spec.headers)] for spec in SHEET_SPECS}

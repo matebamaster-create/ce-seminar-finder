@@ -3,13 +3,13 @@ name: Daily collection and publish
 on:
   push:
     branches: [main]
-    paths: ["src/**", "data/**", ".github/workflows/daily.yml", "pyproject.toml"]
+    paths: ["src/**", "site/**", "scripts/**", "data/**", ".github/workflows/daily.yml", "pyproject.toml"]
   schedule:
     - cron: "17 21 * * *"
   workflow_dispatch:
     inputs:
       source_ids:
-        description: "取得するsource_id（カンマ区切り、空ならRepository Variableを使用）"
+        description: "取得するsource_id（カンマ区切り、空なら管理画面で有効にした取得元）"
         required: false
         type: string
       publish:
