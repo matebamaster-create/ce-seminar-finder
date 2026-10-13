@@ -92,7 +92,7 @@ def run_daily_collection(
     *,
     collector: SourceCollector,
     sources: Iterable[SourceConfig],
-    enabled_source_ids: set[str],
+    enabled_source_ids: set[str] | None,
     lock_path: Path,
     max_detail_pages: int = 1,
     now: datetime | None = None,
@@ -106,7 +106,7 @@ def run_daily_collection(
         for original in sources:
             source = replace(
                 original,
-                enabled=original.source_id in enabled_source_ids,
+                enabled=original.enabled if enabled_source_ids is None else original.source_id in enabled_source_ids,
             )
             try:
                 result = collector.collect(
@@ -133,6 +133,13 @@ def run_daily_collection(
                 )
             )
             summary.candidates.extend(result.candidates)
+            if source.enabled and getattr(collector, "repository", None):
+                recorder = getattr(collector.repository, "record_source_result", None)
+                if recorder:
+                    try:
+                        recorder(result)
+                    except Exception as exc:
+                        summary.fatal_errors.append(f"{source.source_id}: status persistence {type(exc).__name__}")
     summary.finished_at = datetime.now(UTC).isoformat()
     return summary
 

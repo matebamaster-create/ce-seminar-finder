@@ -249,7 +249,7 @@ class RulesPromptCacheTest(unittest.TestCase):
             values["event_start"].value,
         )
         self.assertEqual("有料", values["fee_category"].value)
-        self.assertIn("非会員：2,000円", values["fee_text"].value)
+        self.assertIn("非会員:2,000円", values["fee_text"].value)
         self.assertEqual(
             "2026-07-14T23:59:00+09:00",
             values["application_deadline_at"].value,

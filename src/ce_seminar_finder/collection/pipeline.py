@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import time
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -42,10 +43,12 @@ class SourceCollector:
         fetcher: SafeHttpFetcher,
         repository: CollectionRepository | None = None,
         state_store: JsonFetchStateStore | None = None,
+        renderer=None,
     ) -> None:
         self.fetcher = fetcher
         self.repository = repository
         self.state_store = state_store
+        self.renderer = renderer
 
     def collect(
         self,
@@ -90,13 +93,19 @@ class SourceCollector:
             if response.outcome == FetchOutcome.FAILED:
                 failures += 1
                 continue
-            if response.outcome in {
-                FetchOutcome.NOT_MODIFIED,
-                FetchOutcome.BLOCKED,
-            }:
+            if response.outcome == FetchOutcome.BLOCKED or (response.outcome == FetchOutcome.NOT_MODIFIED and not response.body):
                 continue
             fetched_documents[response.final_url.split("#", 1)[0]] = response
             parsed = adapter.parse(source, response)
+            if parsed.technical_hold_reason == "CLIENT_RENDER_REQUIRED" and self.renderer:
+                try:
+                    self.fetcher.rate_limiter.wait(response.final_url, source.request_interval_seconds)
+                    response = self.renderer.render(response)
+                    request_count += 1
+                    parsed = adapter.parse(source, response)
+                    result.warnings.append("PUBLIC_BROWSER_RENDERED")
+                except Exception as exc:
+                    result.warnings.append("BROWSER_RENDER_FAILED:" + type(exc).__name__)
             candidates.extend(parsed.candidates)
             result.warnings.extend(parsed.warnings)
             if parsed.technical_hold_reason:
@@ -136,7 +145,7 @@ class SourceCollector:
             )
             request_count += 1
             detail_fetches += 1
-            if response.outcome == FetchOutcome.FETCHED:
+            if response.outcome in {FetchOutcome.FETCHED, FetchOutcome.NOT_MODIFIED} and response.body:
                 enriched.append(adapter.enrich_candidate(candidate, response))
             else:
                 enriched.append(candidate)
@@ -235,6 +244,12 @@ class SourceCollector:
             minimum_interval=source.request_interval_seconds,
             resolve_dns=resolve_dns,
         )
+        if response.outcome == FetchOutcome.NOT_MODIFIED and self.state_store:
+            cached = self.state_store.cached_body(url.split("#", 1)[0])
+            if cached:
+                body, metadata = cached
+                response = replace(response, body=body, encoding=metadata["encoding"],
+                    final_url=metadata["final_url"], headers={**response.headers, "content-type": metadata["content_type"]})
         finished = _utcnow()
         result.fetched_urls.append(url)
         level = "info"

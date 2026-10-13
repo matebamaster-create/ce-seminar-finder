@@ -51,9 +51,9 @@ def text_document(
 
 
 class AdapterTest(unittest.TestCase):
-    def test_all_twenty_four_sources_have_adapters(self) -> None:
+    def test_all_thirty_one_sources_have_adapters(self) -> None:
         configs = source_configs()
-        self.assertEqual(24, len(configs))
+        self.assertEqual(31, len(configs))
         for config in configs:
             with self.subTest(source=config.source_id):
                 self.assertIsNotNone(adapter_for_source(config.source_id))

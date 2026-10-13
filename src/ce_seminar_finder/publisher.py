@@ -4,6 +4,7 @@ import json
 import hashlib
 import re
 import unicodedata
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ PUBLIC_FIELDS = (
     "capacity_text",
     "credits_text",
     "event_start_at",
+    "event_date_precision",
     "event_end_at",
     "stream_start_at",
     "stream_end_at",
@@ -167,15 +169,20 @@ def _sort_key(event: dict[str, Any]) -> tuple[int, str, str]:
 def build_public_payload(
     records: list[EventRecord],
     generated_at: datetime | None = None,
+    *,
+    include_archived: bool = False,
 ) -> dict[str, Any]:
     timestamp = generated_at or datetime.now(UTC)
     if timestamp.tzinfo is None:
         raise ValueError("generated_at must be timezone-aware")
-    events = [
-        public
-        for record in records
-        if (public := build_public_event(record)) is not None
-    ]
+    events = []
+    for record in records:
+        archived = include_archived and record.publication_status == PublicationStatus.ARCHIVED
+        public = build_public_event(replace(record, publication_status=PublicationStatus.PUBLISHED) if archived else record)
+        if public is not None:
+            if archived:
+                public["archived"] = True
+            events.append(public)
     events.sort(key=_sort_key)
     return {
         "schema_version": 1,

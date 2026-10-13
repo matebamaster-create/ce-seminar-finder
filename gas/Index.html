@@ -257,7 +257,7 @@
         <section class="view" id="view-sources">
           <div class="panel" style="margin-top:0">
             <div class="panel-head"><div><h2>取得元サイト</h2><p class="panel-sub">各技士会サイトの稼働状態です。</p></div></div>
-            <div class="table-wrap"><table><thead><tr><th>地域</th><th>団体</th><th>稼働</th><th>最終成功</th><th>失敗</th><th></th></tr></thead><tbody id="sources-body"></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>地域</th><th>団体</th><th>日次取得</th><th>取得結果</th><th>最終成功</th><th>失敗</th><th></th></tr></thead><tbody id="sources-body"></tbody></table></div>
           </div>
         </section>
         <section class="view" id="view-rollout">
@@ -502,13 +502,20 @@
       root.replaceChildren(...state.data.sources.map(source => {
         const tr = document.createElement("tr");
         tr.append(textCell(source.prefecture), titleCell({ title: source.organization_name, organizer_name: source.base_url }));
-        tr.append(badgeCell(source.enabled ? "稼働中" : "停止中"));
+        tr.append(badgeCell(source.enabled ? "有効" : "停止中"));
+        tr.append(textCell((source.last_result || "未検証") + (source.last_message ? " / " + source.last_message : "")));
         tr.append(textCell(shortDate(source.last_success_at)));
         tr.append(badgeCell(source.consecutive_failures ? source.consecutive_failures + "回" : "なし"));
         const action = document.createElement("td");
         const button = el("button", "button secondary small", "今すぐ取得");
         button.addEventListener("click", () => requestSource(source.source_id));
-        action.append(button); tr.append(action); return tr;
+        const toggle = el("button", "button secondary small", source.enabled ? "停止する" : "日次取得を有効化");
+        toggle.addEventListener("click", () => {
+          setLoading(true);
+          google.script.run.withSuccessHandler(result => { showToast(result.message); loadData(); })
+            .withFailureHandler(handleError).setSourceEnabledFromAdmin(source.source_id, !source.enabled);
+        });
+        action.append(button, toggle); tr.append(action); return tr;
       }));
     }
 

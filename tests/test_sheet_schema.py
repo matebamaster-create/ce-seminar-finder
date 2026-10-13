@@ -46,7 +46,7 @@ class SheetSchemaTest(unittest.TestCase):
 
     def test_initial_sources_match_source_schema(self) -> None:
         source_spec = next(spec for spec in SHEET_SPECS if spec.title == "Sources")
-        self.assertEqual(24, len(SOURCE_ROWS))
+        self.assertEqual(31, len(SOURCE_ROWS))
         for row in SOURCE_ROWS:
             self.assertEqual(len(source_spec.headers), len(row))
             self.assertFalse(row[source_spec.headers.index("enabled")])
@@ -97,7 +97,7 @@ class SheetSchemaTest(unittest.TestCase):
         payload = workbook_template_payload()
         self.assertEqual(14, len(payload["sheets"]))
         self.assertEqual(84, len(payload["settings_rows"]))
-        self.assertEqual(24, len(payload["source_rows"]))
+        self.assertEqual(31, len(payload["source_rows"]))
         self.assertGreater(len(payload["field_guide_rows"]), 50)
 
 

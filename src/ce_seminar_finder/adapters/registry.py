@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .common import PatternHtmlAdapter
+from .structured import CmsAdapter, NaraOfficialAdapter, ShizuokaAdapter, FukuiAdapter
 from .sites import (
     EhimeAdapter,
     FukuokaAdapter,
@@ -40,9 +41,9 @@ ADAPTERS = {
     "src_okinawa": OkinawaAdapter,
     "src_jace": JaceAdapter,
     "src_tottori": TottoriAdapter,
-    "src_shimane": ShimaneAdapter,
+    "src_shimane": CmsAdapter,
     "src_okayama": OkayamaAdapter,
-    "src_hiroshima": HiroshimaAdapter,
+    "src_hiroshima": CmsAdapter,
     "src_yamaguchi": YamaguchiAdapter,
     "src_tokushima": TokushimaAdapter,
     "src_kagawa": KagawaAdapter,
@@ -52,8 +53,15 @@ ADAPTERS = {
     "src_kyoto": KyotoAdapter,
     "src_osaka": OsakaAdapter,
     "src_hyogo": HyogoAdapter,
-    "src_nara": NaraAdapter,
+    "src_nara": NaraOfficialAdapter,
     "src_wakayama": WakayamaAdapter,
+    "src_gifu": CmsAdapter,
+    "src_shizuoka": ShizuokaAdapter,
+    "src_aichi": lambda: PatternHtmlAdapter(detail_patterns=(r"/new/",), include_event_text_links=True),
+    "src_mie": lambda: PatternHtmlAdapter(detail_patterns=(r"/wp/",), include_event_text_links=True),
+    "src_toyama": lambda: PatternHtmlAdapter(detail_patterns=(r"/deta/|\.html",), include_event_text_links=True),
+    "src_ishikawa": YamaguchiAdapter,
+    "src_fukui": FukuiAdapter,
 }
 
 

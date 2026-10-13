@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
+from bs4 import BeautifulSoup
 
 from ce_seminar_finder.extraction.rules import extract_rule_values
 
@@ -343,12 +344,14 @@ def html_links(document: FetchResponse) -> list[Link]:
 
 
 def page_text(document: FetchResponse) -> tuple[str, str]:
-    parser = PageTextParser()
-    parser.feed(document.text())
-    title = normalize_space(" ".join(parser.heading_parts[:3]))
-    if not title:
-        title = normalize_space(" ".join(parser.title_parts))
-    body = normalize_space(" ".join(parser.body_parts))
+    soup = BeautifulSoup(document.text(), "html.parser")
+    heading = soup.select_one("h1.entry-title") or soup.select_one("article h1") or soup.select_one("h1") or soup.title
+    title = normalize_space(heading.get_text(" ", strip=True)) if heading else ""
+    body_node = next((node for selector in (".entry-content", ".post-content", "article", "main", "#main")
+                      if (node := soup.select_one(selector)) is not None), soup)
+    for node in body_node.select("script,style,noscript,svg,nav,header,footer,aside,.post-navigation,.navigation,.sidebar"):
+        node.decompose()
+    body = body_node.get_text("\n", strip=True)
     return title, body
 
 
@@ -427,6 +430,8 @@ class PatternHtmlAdapter:
             if not link.href or link.href.startswith(("#", "mailto:", "javascript:")):
                 continue
             url = urljoin(document.final_url, link.href)
+            if re.search(r"\.(?:zip|exe|docx?|xlsx?|pptx?|jpe?g|png|gif)(?:[?#]|$)", url, re.I):
+                continue
             title = normalize_space(link.text or link.title)
             if is_pdf_url(url):
                 pdfs.append(url)
@@ -475,6 +480,11 @@ class PatternHtmlAdapter:
         candidate: EventCandidate,
         document: FetchResponse,
     ) -> EventCandidate:
+        if candidate.discovery_method in {"html_heading_block", "html_event_table", "html_pdf"}:
+            from dataclasses import replace
+            return replace(candidate, extracted_fields=extract_rule_values(
+                candidate.block_text, title_hint=candidate.title_hint,
+                allowed_urls=candidate.pdf_urls))
         links = html_links(document)
         pdfs = [
             urljoin(document.final_url, link.href)
@@ -492,6 +502,7 @@ class PatternHtmlAdapter:
         extracted_fields = extract_rule_values(
             body,
             allowed_urls=allowed_urls,
+            title_hint=candidate.title_hint,
         )
         title = candidate.title_hint
         if page_title and is_event_like(page_title):
@@ -504,7 +515,7 @@ class PatternHtmlAdapter:
             pdf_urls=tuple(dict.fromkeys((*candidate.pdf_urls, *pdfs))),
             published_at=candidate.published_at,
             discovery_method=candidate.discovery_method,
-            block_text=body[:4000],
+            block_text=body[:16000],
             extracted_fields=extracted_fields,
             confidence_hint=max(candidate.confidence_hint, 0.8),
         )

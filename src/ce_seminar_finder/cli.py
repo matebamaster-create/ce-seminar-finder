@@ -18,6 +18,9 @@ from .collection.repository import (
 )
 from .collection.sources import source_config
 from .collection.sources import source_configs
+from .collection.sources import source_configs_from_sheet
+from .regions import region_source_ids, REGIONS
+from .collection.renderer import PublicPageRenderer
 from .automation.daily import run_daily_collection, write_daily_outputs
 from .automation.lock import RunAlreadyActive
 from .extraction.pdf import extract_pdf
@@ -69,6 +72,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     collect_source.add_argument("--source-id", required=True)
     collect_source.add_argument("--force", action="store_true")
+    collect_source.add_argument("--render-public-pages", action="store_true")
     collect_source.add_argument("--max-detail-pages", type=int, default=1)
     collect_source.add_argument(
         "--state-file",
@@ -117,6 +121,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     daily_run.add_argument("--max-detail-pages", type=int, default=1)
     daily_run.add_argument("--spreadsheet-id")
+    daily_run.add_argument("--use-sheet-sources", action="store_true")
+    daily_run.add_argument("--render-public-pages", action="store_true")
+    daily_run.add_argument("--region", choices=["west", *REGIONS])
     daily_run.add_argument("--summary", type=Path, required=True)
     daily_run.add_argument("--candidates", type=Path, required=True)
     daily_run.add_argument("--markdown-summary", type=Path)
@@ -194,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             fetcher=SafeHttpFetcher(state_store=store),
             repository=repository,
             state_store=store,
+            renderer=PublicPageRenderer() if args.render_public_pages else None,
         )
         result = collector.collect(
             config,
@@ -306,8 +314,19 @@ def main(argv: list[str] | None = None) -> int:
             for item in args.enabled_sources.replace(",", " ").split()
             if item
         }
+        configs = source_configs()
+        service = load_google_service() if args.spreadsheet_id else None
+        if args.use_sheet_sources:
+            if service is None:
+                raise ValueError("--use-sheet-sources requires --spreadsheet-id")
+            configs = source_configs_from_sheet(service, args.spreadsheet_id)
+            if not args.enabled_sources:
+                enabled = None
+        if args.region:
+            ids = region_source_ids(args.region)
+            configs = tuple(config for config in configs if config.source_id in ids)
         known = {item.source_id for item in source_configs()}
-        unknown = sorted(enabled - known)
+        unknown = sorted((enabled or set()) - known)
         if unknown:
             raise ValueError(f"Unknown source_id: {', '.join(unknown)}")
         store = JsonFetchStateStore(args.state_file)
@@ -319,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
             repository = CompositeCollectionRepository(
                 local_repository,
                 SheetCollectionRepository(
-                    load_google_service(),
+                    service,
                     args.spreadsheet_id,
                 ),
             )
@@ -328,10 +347,12 @@ def main(argv: list[str] | None = None) -> int:
             repository=repository,
             state_store=store,
         )
+        if args.render_public_pages:
+            collector.renderer = PublicPageRenderer()
         try:
             summary = run_daily_collection(
                 collector=collector,
-                sources=source_configs(),
+                sources=configs,
                 enabled_source_ids=enabled,
                 lock_path=args.work_directory / "daily.lock",
                 max_detail_pages=max(0, args.max_detail_pages),
@@ -356,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
         generated_at = (
             parse_datetime(args.generated_at) if args.generated_at else None
         )
-        payload = build_public_payload(records, generated_at)
+        payload = build_public_payload(records, generated_at, include_archived=True)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -44,4 +45,20 @@ class JsonFetchStateStore:
             + "\n",
             encoding="utf-8",
         )
+
+    def cache_body(self, url: str, body: bytes, *, encoding: str, final_url: str, content_type: str) -> None:
+        path = self.path.parent / (self.path.stem + "-bodies")
+        path.mkdir(parents=True, exist_ok=True)
+        key = hashlib.sha256(url.encode()).hexdigest()
+        (path / (key + ".body")).write_bytes(body)
+        (path / (key + ".json")).write_text(json.dumps({"encoding": encoding, "final_url": final_url, "content_type": content_type}), encoding="utf-8")
+
+    def cached_body(self, url: str):
+        path = self.path.parent / (self.path.stem + "-bodies")
+        key = hashlib.sha256(url.encode()).hexdigest()
+        body = path / (key + ".body")
+        meta = path / (key + ".json")
+        if not body.exists() or not meta.exists():
+            return None
+        return body.read_bytes(), json.loads(meta.read_text(encoding="utf-8"))
 

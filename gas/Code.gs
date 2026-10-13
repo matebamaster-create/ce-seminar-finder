@@ -139,6 +139,9 @@ function finalizeSelectedReview() {
 }
 
 function applyDecisionToEvent_(sheet, row, review) {
+  if (["公開", "修正後公開", "要確認付き公開"].indexOf(review.decision) >= 0) {
+    validatePublishable_(rowObject_(sheet, row));
+  }
   setCellByHeader_(sheet, row, "review_status", "確認済み");
   setCellByHeader_(sheet, row, "last_admin_updated_at", new Date().toISOString());
 
@@ -387,6 +390,20 @@ function getAdminDashboard() {
         notes: source.notes || "",
       };
     });
+  const logSheet = requiredSheet_(spreadsheet, "FetchLogs");
+  const latestSource = {};
+  if (logSheet.getLastRow() > 1) {
+    const start = Math.max(2, logSheet.getLastRow() - 499);
+    logSheet.getRange(start, 1, logSheet.getLastRow() - start + 1, 15).getDisplayValues().forEach(function(row) {
+      if (row[3] === "source_summary") latestSource[row[2]] = {status: row[12], message: row[13], at: row[6]};
+    });
+  }
+  sources.forEach(function(source) {
+    const last = latestSource[source.source_id];
+    const names = {success: "取得成功", partial: "一部取得", failed: "取得失敗", technical_hold: "取得方法の調整が必要", disabled: "停止中"};
+    source.last_result = last ? names[last.status] || last.status : "未検証";
+    source.last_message = last ? last.message : "";
+  });
   events.sort(function (a, b) {
     return String(a.effective_end_at || "9999").localeCompare(
       String(b.effective_end_at || "9999")
@@ -488,13 +505,32 @@ function saveAdminEvent(payload) {
       );
     }
     const allowed = adminEditableFields_();
+    const normalized = {};
     Object.keys(payload.values).forEach(function (field) {
       if (allowed.indexOf(field) < 0) {
         throw new Error("管理画面から更新できない項目です: " + field);
       }
       const value = normalizeAdminValue_(field, payload.values[field]);
       validateAdminValue_(field, value);
+      normalized[field] = value;
+    });
+    const proposed = Object.assign({}, before, normalized);
+    if (proposed.publication_status === "公開") validatePublishable_(proposed);
+    Object.keys(normalized).forEach(function(field) {
+      const value = normalized[field];
       setCellByHeader_(sheet, row, field, value);
+      if (String(before[field] || "") !== String(value)) {
+        appendByHeaders_(requiredSheet_(spreadsheet, "FieldOverrides"), {
+          override_id: "ovr_" + Utilities.getUuid().replace(/-/g, ""),
+          event_id: payload.event_id,
+          field_name: field,
+          override_value_json: JSON.stringify(value),
+          active: true,
+          reason: "管理画面で修正",
+          updated_by: actor,
+          updated_at: new Date().toISOString(),
+        });
+      }
     });
     const actedAt = new Date().toISOString();
     setCellByHeader_(sheet, row, "last_admin_updated_at", actedAt);
@@ -582,6 +618,22 @@ function decideReviewFromAdmin(payload) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function setSourceEnabledFromAdmin(sourceId, enabled) {
+  const actor = requireAdmin_();
+  const spreadsheet = adminSpreadsheet_();
+  const sheet = requiredSheet_(spreadsheet, "Sources");
+  const row = findRow_(sheet, "source_id", sourceId);
+  if (!row) throw new Error("取得元が見つかりません。");
+  const value = enabled === true;
+  setCellByHeader_(sheet, row, "enabled", value);
+  appendByHeaders_(requiredSheet_(spreadsheet, "ReviewActions"), {
+    action_id: "act_" + Utilities.getUuid().replace(/-/g, ""), event_id: "",
+    action: value ? "source_enable" : "source_disable", actor: actor,
+    acted_at: new Date().toISOString(), note: sourceId,
+  });
+  return {ok: true, message: value ? "日次取得を有効にしました。" : "日次取得を停止しました。"};
 }
 
 function requestSourceUpdateFromAdmin(sourceId) {
@@ -845,6 +897,18 @@ function validateAdminValue_(field, value) {
   ) {
     throw new Error(field + "はhttpまたはhttpsのURLを入力してください。");
   }
+  if (/_(?:at)$/.test(field) && value && !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    throw new Error("日時はタイムゾーン付きで入力してください（例：2026-10-20T19:00:00+09:00）。");
+  }
+}
+
+function validatePublishable_(event) {
+  const missing = [];
+  if (!event.title) missing.push("イベント名");
+  if (!event.organizer_name) missing.push("主催者");
+  if (!event.primary_official_url || !/^https?:\/\//i.test(event.primary_official_url)) missing.push("公式URL");
+  if (!event.event_start_at && !event.stream_start_at) missing.push("開催日または配信開始日");
+  if (missing.length) throw new Error("公開には次の項目が必要です：" + missing.join("、"));
 }
 
 function truthy_(value) {

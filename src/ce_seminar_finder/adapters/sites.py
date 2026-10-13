@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from ce_seminar_finder.extraction.rules import extract_rule_values
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from ce_seminar_finder.collection.models import (
@@ -19,6 +20,7 @@ from .common import (
     is_pdf_url,
     is_title_hint,
     rss_candidates,
+    page_text,
     sitemap_urls,
 )
 
@@ -108,6 +110,7 @@ class OitaAdapter(PatternHtmlAdapter):
                     pdf_urls=tuple(dict.fromkeys(pdfs)),
                     discovery_method="html_event_table",
                     block_text=table.text[:4000],
+                    extracted_fields=extract_rule_values(table.text, title_hint=title, allowed_urls=tuple(urls)),
                     confidence_hint=0.85,
                 )
             )
@@ -167,7 +170,8 @@ class _MedikikiNuxtAdapter(PatternHtmlAdapter):
         document: FetchResponse,
     ) -> AdapterResult:
         text = document.text()
-        if 'id="__nuxt"' in text and "Loading..." in text:
+        visible_text = "" if "xml" in document.content_type else page_text(document)[1]
+        if 'id="__nuxt"' in text and "Loading..." in visible_text:
             return AdapterResult(
                 technical_hold_reason="CLIENT_RENDER_REQUIRED",
                 warnings=(
@@ -199,7 +203,10 @@ class _MedikikiNuxtAdapter(PatternHtmlAdapter):
                 )
             except ET.ParseError:
                 pass
-        return super().parse(source, document)
+        result = super().parse(source, document)
+        if not result.candidates and "検索条件に当てはまるセミナーはございません" in visible_text:
+            return AdapterResult(warnings=("PUBLIC_SEMINAR_LIST_EMPTY",))
+        return result
 
 
 class OkinawaAdapter(_MedikikiNuxtAdapter):
@@ -381,6 +388,7 @@ def _heading_candidates(
                 pdf_urls=tuple(dict.fromkeys(pdfs)),
                 discovery_method="html_heading_block",
                 block_text=block.text[:4000],
+                extracted_fields=extract_rule_values(block.text, title_hint=title, allowed_urls=tuple(urls)),
                 confidence_hint=0.85,
             )
         )

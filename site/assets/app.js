@@ -4,6 +4,7 @@ const controls = {
   keyword: document.querySelector("#keyword"),
   genre: document.querySelector("#genre"),
   format: document.querySelector("#format"),
+  prefecture: document.querySelector("#prefecture"),
   eventType: document.querySelector("#event-type"),
   fee: document.querySelector("#fee"),
   month: document.querySelector("#month"),
@@ -61,6 +62,7 @@ async function applyFilters() {
         card.dataset.genre.split("|").includes(controls.genre.value)) &&
       (!controls.format.value ||
         card.dataset.format === controls.format.value) &&
+      (!controls.prefecture?.value || card.dataset.prefecture === controls.prefecture.value) &&
       (!controls.eventType.value ||
         card.dataset.eventType === controls.eventType.value) &&
       (!controls.fee.value || card.dataset.fee === controls.fee.value) &&
@@ -79,6 +81,7 @@ async function applyFilters() {
   const labels = [
     controls.genre.value,
     controls.format.value,
+    controls.prefecture?.value,
     controls.eventType.value,
     controls.fee.value,
     controls.month.value,
@@ -92,6 +95,11 @@ async function applyFilters() {
 function sortCards() {
   const mode = controls.sort.value;
   const sorted = [...cards].sort((a, b) => {
+    if (mode === "recommended") {
+      const priority = {Web: 0, "オンデマンド": 1, "ハイブリッド": 2, "現地開催": 3, "要確認": 4};
+      const difference = (priority[a.dataset.format] ?? 4) - (priority[b.dataset.format] ?? 4);
+      if (difference) return difference;
+    }
     if (mode === "title") {
       return a.querySelector("h3").textContent.localeCompare(
         b.querySelector("h3").textContent,
@@ -99,6 +107,7 @@ function sortCards() {
       );
     }
     const key = mode === "deadline" ? "deadline" : "date";
+    if (mode === "newest") return (b.dataset.updated || "").localeCompare(a.dataset.updated || "");
     return (a.dataset[key] || "9999").localeCompare(
       b.dataset[key] || "9999"
     );

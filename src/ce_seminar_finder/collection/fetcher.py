@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -11,6 +12,7 @@ from datetime import UTC, datetime
 from email.message import Message
 from typing import Protocol
 from urllib.parse import urljoin
+import certifi
 
 from .cache import FetchState, JsonFetchStateStore
 from .models import FetchOutcome, FetchRequest, FetchResponse
@@ -57,7 +59,11 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 class StandardHttpTransport:
     def __init__(self) -> None:
-        self._opener = urllib.request.build_opener(_NoRedirect())
+        self._opener = urllib.request.build_opener(
+            _NoRedirect(), urllib.request.HTTPSHandler(
+                context=ssl.create_default_context(cafile=certifi.where())
+            )
+        )
 
     def request(
         self,
@@ -295,6 +301,8 @@ class SafeHttpFetcher:
                     content_hash=content_hash,
                 )
                 if self.state_store and use_cache:
+                    self.state_store.cache_body(url, raw.body, encoding=encoding,
+                        final_url=current_url, content_type=raw.headers.get("content-type", ""))
                     self.state_store.put(
                         FetchState(
                             url=url,

@@ -9,7 +9,7 @@ description = "CE Seminar Finder collection and publishing foundation"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-dependencies = []
+dependencies = ["beautifulsoup4>=4.12,<5", "certifi>=2025.1.31"]
 
 [project.optional-dependencies]
 google = [

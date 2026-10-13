@@ -62,7 +62,7 @@ def _partition_events(
             or event.get("event_start_at")
         )
         end = _parse_datetime(end_value) if end_value else None
-        (archived if end and end < generated_at else active).append(event)
+        (archived if event.get("archived") or end and end < generated_at else active).append(event)
     active.sort(key=_event_sort_key)
     archived.sort(key=_event_sort_key, reverse=True)
     return active, archived
@@ -139,6 +139,7 @@ def _listing_page(
       <label>キーワード<input id="keyword" type="search" placeholder="2文字以上"></label>
       <label>ジャンル<select id="genre"><option value="">すべて</option>{_options(GENRES)}</select></label>
       <label>開催形式<select id="format"><option value="">すべて</option>{_options(FORMATS)}</select></label>
+      <label>情報元の都道府県<select id="prefecture"><option value="">すべて</option>{_options(tuple(sorted({str(e.get('source_prefecture')) for e in events if e.get('source_prefecture')})))}</select></label>
       <label>イベント種別<select id="event-type"><option value="">すべて</option>{_options(('セミナー','研修会','講習会','学会・大会','研究会','オンデマンド','その他'))}</select></label>
       <label>参加費<select id="fee"><option value="">すべて</option>{_options(('無料','有料','要確認'))}</select></label>
       <label>開催月<input id="month" type="month"></label>
@@ -149,7 +150,7 @@ def _listing_page(
   <section class="results" aria-labelledby="result-heading">
     <div class="result-toolbar">
       <h2 id="result-heading"><span id="result-count">{len(events)}</span>件</h2>
-      <label>並び順<select id="sort"><option value="date">開催日が近い順</option><option value="deadline">申込締切が近い順</option><option value="title">イベント名順</option></select></label>
+      <label>並び順<select id="sort"><option value="recommended">Web優先・開催日順</option><option value="date">開催日が近い順</option><option value="newest">新着順</option><option value="deadline">申込締切が近い順</option><option value="title">イベント名順</option></select></label>
     </div>
     <p id="active-filters" class="active-filters" aria-live="polite"></p>
     <div id="event-list" class="card-grid">{cards or '<p class="empty">該当するイベントはありません。</p>'}</div>
@@ -200,13 +201,15 @@ def _event_card(
  data-format="{_e(event.get('format', '要確認'))}"
  data-event-type="{_e(event.get('event_type', 'その他'))}"
  data-fee="{_e(event.get('fee_category', '要確認'))}"
+ data-prefecture="{_e(event.get('source_prefecture', ''))}"
+ data-updated="{_e(event.get('last_verified_at') or event.get('last_auto_fetched_at') or '')}"
  data-date="{_e(start or '')}"
  data-deadline="{_e(deadline or '')}"
  data-pdf-hashes="{_e(pdf_hashes)}">
   <div class="tag-row"><span class="format-tag">{_e(event.get('format', '要確認'))}</span>{tags}{archive_label}</div>
   <h3><a href="{_e(detail_url)}">{_e(event.get('title', '名称要確認'))}</a></h3>
   <dl class="card-facts">
-    <div><dt>開催</dt><dd>{_time(start)}</dd></div>
+    <div><dt>{'配信期間' if event.get('format') == 'オンデマンド' else '開催'}</dt><dd>{_period(event.get('stream_start_at'), event.get('stream_end_at'), event.get('stream_period_text')) if event.get('format') == 'オンデマンド' else _time(start)}</dd></div>
     <div><dt>締切</dt><dd>{_time(deadline)}</dd></div>
     <div><dt>参加費</dt><dd>{_e(event.get('fee_text') or event.get('fee_category', '要確認'))}</dd></div>
   </dl>

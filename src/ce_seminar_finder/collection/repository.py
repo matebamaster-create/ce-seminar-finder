@@ -36,18 +36,34 @@ class SheetCollectionRepository:
         self.spreadsheet_id = spreadsheet_id
 
     def append_candidates(self, candidates: list[EventCandidate]) -> None:
-        if not candidates:
-            return
-        self._append(
-            "EventSources!A:L",
-            [candidate_sheet_row(candidate) for candidate in candidates],
-        )
-        self._apply_extracted_fields(candidates)
+        from .ingestion import CandidateIngestor
+        CandidateIngestor(self.service, self.spreadsheet_id).ingest(candidates)
 
     def append_logs(self, logs: list[FetchLogEntry]) -> None:
         if not logs:
             return
         self._append("FetchLogs!A:O", [log.as_sheet_row() for log in logs])
+
+    def record_source_result(self, result) -> None:
+        from ce_seminar_finder.sheets.schema import SOURCES_HEADERS
+        api = self.service.spreadsheets().values()
+        rows = api.get(spreadsheetId=self.spreadsheet_id, range="Sources!A:X").execute().get("values", [])
+        for row_number, row in enumerate(rows[1:], 2):
+            if row and row[0] == result.source_id:
+                fail_col = SOURCES_HEADERS.index("consecutive_failures")
+                previous = int(row[fail_col] or 0) if len(row) > fail_col else 0
+                ok = result.status.value in {"success", "partial"}
+                data = [{"range": f"Sources!W{row_number}", "values": [[0 if ok else previous+1]]}]
+                if ok:
+                    data.append({"range": f"Sources!V{row_number}", "values": [[datetime.now(UTC).isoformat()]]})
+                if any(log.stage == "robots" for log in result.logs):
+                    data.append({"range": f"Sources!P{row_number}", "values": [[datetime.now(UTC).isoformat()]]})
+                api.batchUpdate(spreadsheetId=self.spreadsheet_id, body={"valueInputOption": "RAW", "data": data}).execute()
+                break
+        now = datetime.now(UTC).isoformat()
+        self._append("FetchLogs!A:O", [["source-summary", "log_"+hashlib.sha256((result.source_id+now).encode()).hexdigest()[:24],
+            result.source_id, "source_summary", "info", now, now, "", "", 1, 0, 0,
+            result.status.value, str(len(result.candidates))+"件 / "+" / ".join(result.warnings[:4]), ""]])
 
     def _append(self, range_name: str, values: list[list[object]]) -> None:
         (
@@ -278,3 +294,9 @@ class CompositeCollectionRepository:
     def append_logs(self, logs: list[FetchLogEntry]) -> None:
         for repository in self.repositories:
             repository.append_logs(logs)
+
+    def record_source_result(self, result) -> None:
+        for repository in self.repositories:
+            recorder = getattr(repository, "record_source_result", None)
+            if recorder:
+                recorder(result)

@@ -637,7 +637,7 @@ def _regional_source_row(
         "",
         "",
         robots_url,
-        "2026-07-14T00:00:00+09:00",
+        "",
         "",
         "",
         "",
@@ -829,6 +829,56 @@ SOURCE_ROWS += (
     ),
 )
 
+
+SOURCE_ROWS += tuple(
+    _regional_source_row(
+        "src_" + name, organization, prefecture, base, discovery, paths, adapter,
+        robots_url=base.rstrip("/") + "/robots.txt", notes=notes,
+    )
+    for name, organization, prefecture, base, discovery, paths, adapter, notes in (
+        ("gifu", "一般社団法人岐阜県臨床工学技士会", "岐阜県", "https://gifu-acet.gr.jp/",
+         "https://gifu-acet.gr.jp/\nhttps://gifu-acet.gr.jp/infomation", "/", "proprietary_cms", "独自CMS。見出しと詳細リンクを組み合わせて取得"),
+        ("shizuoka", "一般社団法人静岡県臨床工学技士会", "静岡県", "https://www.shizurinko.com/",
+         "https://www.shizurinko.com/seminar/", "/seminar/\n/wp-content/", "event_table", "開催予告表の行ごとに日程・会場・PDF・申込先を取得"),
+        ("aichi", "一般社団法人愛知県臨床工学技士会", "愛知県", "https://ai-ces.jpn.org/new/",
+         "https://ai-ces.jpn.org/new/feed/\nhttps://ai-ces.jpn.org/new/", "/new/", "wordpress", "WordPress。医療情報・求人を除き催事・関連団体を収集"),
+        ("mie", "一般社団法人共益型三重県臨床工学技士会", "三重県", "https://miece.jp/wp/",
+         "https://miece.jp/wp/feed/\nhttps://miece.jp/wp/", "/wp/", "wordpress", "WordPress記事と公式PDF。旧hpbサイトは使用しない"),
+        ("toyama", "一般社団法人富山県臨床工学技士会", "富山県", "https://www.toyama-ce.gr.jp/",
+         "https://www.toyama-ce.gr.jp/", "/", "static_html", "静的HTML。公式掲載PDFを取得、到達不可は失敗として可視化"),
+        ("ishikawa", "一般社団法人石川県臨床工学技士会", "石川県", "https://ce-ishikawa.medikiki-hp1.com/",
+         "https://ce-ishikawa.medikiki-hp1.com/seminars\nhttps://ce-ishikawa.medikiki-hp1.com/notice", "/", "medikiki_nuxt", "公開画面のブラウザ描画が必要。会員限定データは対象外"),
+        ("fukui", "一般社団法人福井県臨床工学技士会", "福井県", "https://sites.google.com/fukurinkou.com/face",
+         "https://sites.google.com/fukurinkou.com/face", "/fukurinkou.com/face", "google_sites", "Google Sitesの公開本文を開催日ブロック単位で取得"),
+    )
+)
+
+# Current official URLs and content paths verified on 2026-10-13. Broad paths
+# are restricted to the already approved association host, never external hosts.
+_SOURCE_UPDATES = {
+    "src_nara": {"base_url": "https://www.narace.jp/", "discovery_urls": "https://www.narace.jp/", "allowed_path_prefixes": "/", "adapter_type": "heading_table", "robots_url": "https://www.narace.jp/robots.txt", "notes": "県公式h4見出し＋表を直接取得。日臨工代替RSSは廃止"},
+    "src_aichi": {"robots_url": "https://ai-ces.jpn.org/robots.txt"},
+    "src_mie": {"robots_url": "https://miece.jp/robots.txt"},
+    "src_fukui": {"robots_url": "https://sites.google.com/robots.txt"},
+    "src_tokushima": {"allowed_path_prefixes": "/"},
+    "src_tottori": {"allowed_path_prefixes": "/"},
+    "src_ehime": {"allowed_path_prefixes": "/"},
+    "src_jace": {"allowed_path_prefixes": "/"},
+    "src_okinawa": {"allowed_path_prefixes": "/"},
+    "src_yamaguchi": {"allowed_path_prefixes": "/"},
+    "src_oita": {"base_url": "https://www.oacet.or.jp/", "discovery_urls": "https://www.oacet.or.jp/event/", "robots_url": "https://www.oacet.or.jp/robots.txt"},
+}
+_SOURCE_UPDATES.update({
+    "src_oita": {"base_url": "http://www.oacet.or.jp/", "discovery_urls": "http://www.oacet.or.jp/event/", "robots_url": "http://www.oacet.or.jp/robots.txt", "notes": "公式HTTPの公開イベント表。HTTPSは証明書のホスト名不一致。暗号化検証は無効化しない"},
+    "src_kyoto": {"base_url": "http://kcet.jp/", "discovery_urls": "http://kcet.jp/?feed=rss2\nhttp://kcet.jp/", "robots_url": "http://kcet.jp/robots.txt", "notes": "公式HTTPのWordPress。HTTPSはホスト名不一致。公開情報のみ取得"},
+    "src_toyama": {"base_url": "http://www.toyama-ce.gr.jp/", "discovery_urls": "http://www.toyama-ce.gr.jp/", "robots_url": "http://www.toyama-ce.gr.jp/robots.txt", "notes": "現行公式HTTPで公開HTMLとPDFを取得。会員ページは対象外"},
+    "src_kumamoto": {"discovery_urls": "http://www.kumamoto-acet.jp/news.html"},
+})
+SOURCE_ROWS = tuple(
+    tuple(_SOURCE_UPDATES.get(str(row[0]), {}).get(header, value)
+          for header, value in zip(SOURCES_HEADERS, row))
+    for row in SOURCE_ROWS
+)
 
 SHEET_SPECS = (
     SheetSpec(

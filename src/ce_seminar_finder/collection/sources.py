@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from urllib.parse import urlsplit
+from dataclasses import replace
 
 from ce_seminar_finder.sheets.schema import SOURCES_HEADERS, SOURCE_ROWS
 
@@ -62,6 +63,18 @@ def source_config(source_id: str) -> SourceConfig:
         if config.source_id == source_id:
             return config
     raise KeyError(source_id)
+
+
+def source_configs_from_sheet(service, spreadsheet_id: str) -> tuple[SourceConfig, ...]:
+    rows = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id, range="Sources!A:X"
+    ).execute().get("values", [])
+    if not rows:
+        raise ValueError("Sources sheet is missing")
+    headers = rows[0]
+    by_id = {str(row[0]): dict(zip(headers, row)) for row in rows[1:] if row}
+    return tuple(replace(config, enabled=str(by_id.get(config.source_id, {}).get("enabled", "false")).lower() in {"true", "1"})
+                 for config in source_configs())
 
 
 def allowed_hosts(config: SourceConfig) -> frozenset[str]:
