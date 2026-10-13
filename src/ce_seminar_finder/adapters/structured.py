@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import replace
 from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode
 
@@ -61,6 +62,44 @@ class TottoriPublicPostsAdapter(PatternHtmlAdapter):
                 pagination = (urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), "")),)
         except (TypeError, ValueError):
             pass
+        return AdapterResult(candidates=tuple(candidates), pagination_urls=pagination)
+
+
+class OsakaOfficialFeedAdapter(PatternHtmlAdapter):
+    """The official feeds contain full public posts, not just excerpts."""
+    def __init__(self):
+        super().__init__(detail_patterns=(r"/archives/",), include_event_text_links=True)
+
+    def parse(self, source, document):
+        if "xml" not in document.content_type and "rss" not in document.content_type:
+            return super().parse(source, document)
+        try:
+            root = ET.fromstring(document.body)
+        except ET.ParseError:
+            return AdapterResult(warnings=("PUBLIC_RSS_INVALID",))
+        candidates = []
+        for item in root.findall(".//item"):
+            title = item.findtext("title", default="").strip()
+            link = item.findtext("link", default="").strip()
+            if not is_title_hint(title) or urlsplit(link).hostname != urlsplit(source.base_url).hostname:
+                continue
+            # content:encoded is supplied by the site's own public RSS. Do not
+            # use the feed publication date as the event date.
+            content = item.findtext("{http://purl.org/rss/1.0/modules/content/}encoded")
+            full = bool(content and content.strip())
+            block = BeautifulSoup(content or item.findtext("description", default=""), "html.parser")
+            for node in block.select("script,style,noscript,iframe"):
+                node.decompose()
+            links = tuple(dict.fromkeys(urljoin(link, a["href"]) for a in block.select("a[href]")))
+            text = title + "\n" + block.get_text("\n", strip=True)
+            candidates.append(EventCandidate(source.source_id, document.final_url, link, title,
+                block_text=text[:16000], pdf_urls=tuple(u for u in links if is_pdf_url(u)),
+                discovery_method="wordpress_public_post" if full else "rss",
+                confidence_hint=.9 if full else .6,
+                extracted_fields=extract_rule_values(text, allowed_urls=links, title_hint=title)))
+        pagination = tuple(urljoin(document.final_url, node.get("href", ""))
+            for node in root.findall(".//{http://www.w3.org/2005/Atom}link")
+            if node.get("rel") == "next" and node.get("href"))
         return AdapterResult(candidates=tuple(candidates), pagination_urls=pagination)
 
 

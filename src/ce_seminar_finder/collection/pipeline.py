@@ -125,7 +125,7 @@ class SourceCollector:
         hosts = allowed_hosts(source)
         for candidate in candidates:
             if candidate.discovery_method == "wordpress_public_post":
-                # Public JSON already contains this exact post's full body.
+                # Public JSON/full RSS already contains this exact post's body.
                 enriched.append(candidate)
                 continue
             if max_detail_pages is not None and detail_fetches >= max_detail_pages:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .common import PatternHtmlAdapter
-from .structured import CmsAdapter, NaraOfficialAdapter, ShizuokaAdapter, FukuiAdapter, HyogoOfficialAdapter, WakayamaOfficialAdapter, TottoriPublicPostsAdapter
+from .structured import CmsAdapter, NaraOfficialAdapter, ShizuokaAdapter, FukuiAdapter, HyogoOfficialAdapter, WakayamaOfficialAdapter, TottoriPublicPostsAdapter, OsakaOfficialFeedAdapter
 from .sites import (
     EhimeAdapter,
     FukuokaAdapter,
@@ -51,7 +51,7 @@ ADAPTERS = {
     "src_kochi": KochiAdapter,
     "src_shiga": ShigaAdapter,
     "src_kyoto": KyotoAdapter,
-    "src_osaka": OsakaAdapter,
+    "src_osaka": OsakaOfficialFeedAdapter,
     "src_hyogo": HyogoOfficialAdapter,
     "src_nara": NaraOfficialAdapter,
     "src_wakayama": WakayamaOfficialAdapter,

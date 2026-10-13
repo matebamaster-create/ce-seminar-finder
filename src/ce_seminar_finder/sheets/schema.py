@@ -786,11 +786,11 @@ SOURCE_ROWS += (
         "大阪府",
         "https://osakace.com/",
         "https://osakace.com/archives/category/studys/feed\n"
-        "https://osakace.com/archives/category/studys",
+        "https://osakace.com/archives/othergroup/feed/",
         "/archives/category/studys\n/archives/\n/wp-content/uploads/",
         "wordpress",
         robots_url="https://osakace.com/robots.txt",
-        notes="大臨工の勉強会・セミナーカテゴリだけを巡回",
+        notes="公式RSSの全文を使用。大臨工の勉強会・セミナーと関連団体の公開告知を取得。RSS掲載範囲外の過去記事は別途確認",
     ),
     _regional_source_row(
         "src_hyogo",
