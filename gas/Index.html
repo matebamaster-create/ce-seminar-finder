@@ -514,7 +514,11 @@
       if (!streaming && event.event_date_precision === "date" && !event.event_end_at && Number.isFinite(start)) {
         const dayEnd = new Date(start); dayEnd.setHours(23, 59, 59, 999); end = dayEnd.getTime();
       }
-      return Number.isFinite(start) && Number.isFinite(end) && end >= now;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end < now) return false;
+      // This panel is for upcoming starts, not every still-open date range.
+      // The complete event table remains available for multi-day events.
+      const japanDay = value => new Date(value + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      return streaming || japanDay(start) >= japanDay(now);
     }
 
     function reviewReasonText(value) {

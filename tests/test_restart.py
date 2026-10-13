@@ -63,8 +63,15 @@ class FakeSheets:
             sheet, cells = item["range"].split("!")
             sheet = sheet.strip("'")
             n = int(re.search(r"\d+", cells)[0])-1
-            while len(self.tables[sheet]) <= n: self.tables[sheet].append([])
-            self.tables[sheet][n] = item["values"][0]
+            letters = re.match(r"[A-Z]+", cells)[0]
+            offset = 0
+            for letter in letters: offset = offset * 26 + ord(letter) - 64
+            offset -= 1
+            for index, values in enumerate(item["values"]):
+                while len(self.tables[sheet]) <= n + index: self.tables[sheet].append([])
+                target = self.tables[sheet][n + index]
+                target.extend([""] * max(0, offset + len(values) - len(target)))
+                target[offset:offset + len(values)] = values
         return Execute({})
     def objects(self, sheet):
         headers, *rows = self.tables[sheet]

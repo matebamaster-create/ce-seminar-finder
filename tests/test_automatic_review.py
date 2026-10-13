@@ -82,6 +82,26 @@ class AutomaticReviewTest(unittest.TestCase):
         self.assertEqual("AUTO_PROCESSING_PENDING", s.objects("ReviewQueue")[0]["reason_codes"])
         self.assertEqual("なし", s.objects("Events")[0]["review_label"])
 
+    def test_end_before_start_is_not_archived_or_published(self):
+        item = candidate()
+        item = replace(item, block_text=item.block_text + "\n終了 2026年9月20日20:00",
+            extracted_fields={**item.extracted_fields, "event_end":
+                ExtractedField("2026-09-20T20:00:00+09:00", 1, "終了 2026年9月20日20:00")})
+        s, reviewer = setup([item])
+        self.assertEqual(1, reviewer.run()["human"])
+        self.assertEqual("確認待ち", s.objects("Events")[0]["publication_status"])
+        self.assertIn("DATE_CONFLICT", s.objects("ReviewQueue")[0]["reason_codes"])
+
+    def test_month_spanning_live_range_requires_schedule_review(self):
+        item = candidate()
+        item = replace(item, block_text=item.block_text + "\n終了 2027年2月20日20:00",
+            extracted_fields={**item.extracted_fields, "event_end":
+                ExtractedField("2027-02-20T20:00:00+09:00", 1, "終了 2027年2月20日20:00")})
+        s, reviewer = setup([item])
+        self.assertEqual(1, reviewer.run()["human"])
+        self.assertEqual("確認待ち", s.objects("Events")[0]["publication_status"])
+        self.assertIn("DATE_CONFLICT", s.objects("ReviewQueue")[0]["reason_codes"])
+
     def test_past_event_is_archived_reversibly_even_before_ai(self):
         s, reviewer = setup([candidate(date="2026年9月20日")], ai=False)
         summary = reviewer.run()
@@ -202,6 +222,29 @@ class AutomaticReviewTest(unittest.TestCase):
         s.get = stopped_get
         self.assertTrue(reviewer.run()["suspended_before_write"])
         self.assertEqual("確認待ち", s.objects("Events")[0]["publication_status"])
+
+    def test_initial_enable_retry_does_not_undo_operator_stop(self):
+        s, reviewer = setup()
+        h = s.tables["AutomationRules"][0]
+        s.tables["AutomationRules"][1][h.index("enabled")] = False
+        reviewer.enable_policy()
+        self.assertFalse(reviewer.run()["enabled"])
+
+    def test_enable_policy_does_not_overwrite_concurrent_source_stop(self):
+        s = FakeSheets()
+        s.tables["Sources"].extend([list(row) for row in SOURCE_ROWS])
+        h = s.tables["Sources"][0]
+        row = next(r for r in s.tables["Sources"][1:] if r[0] == "src_nara")
+        row[h.index("enabled")] = True
+        update = s.batchUpdate
+        def stopped_update(**kwargs):
+            if any(d["range"].startswith("'Sources'!J") for d in kwargs["body"]["data"]):
+                row[h.index("enabled")] = False
+            return update(**kwargs)
+        s.batchUpdate = stopped_update
+        AutomaticReviewer(s, "test", now=NOW).enable_policy()
+        self.assertFalse(row[h.index("enabled")])
+        self.assertEqual("allow", row[h.index("auto_publish_policy")])
 
 
 if __name__ == "__main__":

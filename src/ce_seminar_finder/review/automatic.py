@@ -97,13 +97,20 @@ class AutomaticReviewer:
             if source.get("source_id") in ids and source.get("auto_publish_policy") != "allow":
                 source_rows.append({**source, "auto_publish_policy": "allow"})
         existing = next((r for r in self.tables["AutomationRules"] if r.get("rule_id") == RULE_ID), {})
+        if existing:
+            # This switch is initial authorization, not a way to undo a later
+            # operator stop or per-source opt-out on an automated retry.
+            return
         rule = {**existing, "rule_id": RULE_ID, "enabled": True, "scope": "western_31_official",
             "condition_json": json.dumps({"policy_version": POLICY, "source_ids": sorted(ids)}, ensure_ascii=False),
             "action": "publish", "approved_from_action_id": "act_user_grounded_west20261013",
             "approved_by": "owner:explicit-user-approval-2026-10-13", "approved_at": existing.get("approved_at") or now,
             "notes": "公式原文の日時・料金・主催・形式を検証。曖昧な重複と読み取り不良だけ人の確認へ。"}
+        policy_column = self.writer._column(SOURCES_HEADERS.index("auto_publish_policy") + 1)
+        self.writer._write_batches([{"range": f"'Sources'!{policy_column}{row['__row_number']}",
+            "values": [["allow"]]} for row in source_rows])
+        # The authorization marker is last; a partial setup cannot publish.
         self._write_rows("AutomationRules", [rule], AUTOMATION_RULE_HEADERS)
-        self._write_rows("Sources", source_rows, SOURCES_HEADERS)
 
     def _proofs(self):
         chunks = defaultdict(list)
@@ -250,9 +257,14 @@ class AutomaticReviewer:
             return "human", ["EVENT_CLASSIFICATION_CONFLICT"]
         start_field = "stream_start_at" if event.get("format") == "オンデマンド" and event.get("stream_start_at") else "event_start_at"
         start = parsed(event.get(start_field))
+        end_field = "stream_end_at" if event.get("format") == "オンデマンド" else "event_end_at"
+        end = parsed(event.get(end_field))
+        # A reversed range or a month-spanning live event needs schedule-level
+        # review, even when both dates occur somewhere in a long source page.
+        if start and end and (end < start or event.get("format") != "オンデマンド"
+                              and end - start > timedelta(days=31)):
+            return "human", ["DATE_CONFLICT"]
         if start and self._support(event, start_field, proofs, autos):
-            end_field = "stream_end_at" if event.get("format") == "オンデマンド" else "event_end_at"
-            end = parsed(event.get(end_field))
             if end and self._support(event, end_field, proofs, autos) and end < self.now:
                 return "archive", ["PAST_EVENT_CANDIDATE"]
             if event.get("format") != "オンデマンド" and not end and start.date() < self.now.astimezone(start.tzinfo).date():
@@ -345,7 +357,8 @@ class AutomaticReviewer:
         latest_overrides = {r.get("event_id") for r in self.writer._rows("FieldOverrides", len(FIELD_OVERRIDE_HEADERS)) if truth(r.get("active"))}
         latest_reviews = {r.get("review_id"): r for r in self.writer._rows("ReviewQueue", len(REVIEW_QUEUE_HEADERS))}
         live_rules = self.writer._rows("AutomationRules", len(AUTOMATION_RULE_HEADERS))
-        if not any(r.get("rule_id") == RULE_ID and truth(r.get("enabled")) for r in live_rules):
+        if not any(r.get("rule_id") == RULE_ID and truth(r.get("enabled")) and
+                   r.get("condition_json") == rule.get("condition_json") for r in live_rules):
             return {**summary, "suspended_before_write": True}
         live_sources = self.writer._rows("Sources", len(SOURCES_HEADERS))
         live_enabled = {r.get("source_id") for r in live_sources if truth(r.get("enabled")) and r.get("auto_publish_policy") == "allow"}
@@ -477,6 +490,8 @@ class AutomaticReviewer:
             exact = da and da == db and normalize_title(str(ea.get("title"))) == normalize_title(str(eb.get("title")))
             exact = exact and normalize_organizer(str(ea.get("organizer_name"))) == normalize_organizer(str(eb.get("organizer_name")))
             exact = exact and ea.get("format") == eb.get("format") and _fee_ground(str(ea.get("fee_text"))) == _fee_ground(str(eb.get("fee_text")))
+            exact = exact and all(not ea.get(field) or not eb.get(field) or parsed(ea[field]) == parsed(eb[field])
+                for field in ("event_end_at", "stream_start_at", "stream_end_at"))
             exact = exact and all(self._date_precision(events[id_], autos(id_)) == "datetime" for id_ in (a, b))
             from .duplicates import EventSnapshot, assess_duplicate
             score = assess_duplicate(EventSnapshot(a, str(ea.get("title")), str(ea.get("event_start_at") or ea.get("stream_start_at")), str(ea.get("organizer_name")), ea.get("format")),

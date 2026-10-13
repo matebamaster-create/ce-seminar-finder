@@ -169,6 +169,8 @@ assert.equal(ui.sourceMessageText("0件 / PUBLIC_SEMINAR_LIST_EMPTY"), "0件 / �
 const now = Date.parse("2026-10-13T00:00:00+09:00");
 assert.equal(ui.isUpcomingEvent({event_start_at: "2026-10-12T10:00:00+09:00"}, now), false);
 assert.equal(ui.isUpcomingEvent({format:"Web", event_start_at:"2026-06-07T10:00:00+09:00", stream_end_at:"2026-11-01T00:00:00+09:00", effective_end_at:"2026-11-01T00:00:00+09:00"}, now),false);
+assert.equal(ui.isUpcomingEvent({format:"Web", event_start_at:"2026-06-07T10:00:00+09:00", event_end_at:"2026-10-25T16:00:00+09:00"}, now),false);
+assert.equal(ui.isUpcomingEvent({format:"Web", event_start_at:"2026-10-13T10:00:00+09:00", event_end_at:"2026-10-13T12:00:00+09:00"}, now),true);
 assert.equal(ui.isUpcomingEvent({stream_start_at: "2026-09-01T00:00:00+09:00", stream_end_at: "2026-11-01T00:00:00+09:00"}, now), true);
 assert.equal(ui.isUpcomingEvent({publication_status: "アーカイブ", event_start_at: "2026-11-01T00:00:00+09:00"}, now), false);
 assert.equal(ui.isUpcomingEvent({}, now), false);
