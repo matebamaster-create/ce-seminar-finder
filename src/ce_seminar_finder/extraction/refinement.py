@@ -55,6 +55,18 @@ def candidate_payload(candidate: EventCandidate) -> dict:
         "extraction_warnings": list(candidate.extraction_warnings)}
 
 
+def candidate_from_payload(row) -> EventCandidate:
+    return EventCandidate(source_id=row["source_id"], source_url=row["source_url"],
+        detail_url=row["detail_url"], title_hint=row["title_hint"],
+        pdf_urls=tuple(row.get("pdf_urls", [])), published_at=row.get("published_at"),
+        discovery_method=row.get("discovery_method", "html"), block_text=row.get("block_text", ""),
+        extracted_fields={k: ExtractedField(v.get("value"), float(v.get("confidence", 0)), v.get("evidence"))
+            for k, v in row.get("extracted_fields", {}).items()},
+        confidence_hint=float(row.get("confidence_hint", .5)),
+        pdf_documents=tuple(row.get("pdf_documents", [])),
+        extraction_warnings=tuple(row.get("extraction_warnings", [])))
+
+
 def read_saved_candidates(paths: list[Path]) -> list[EventCandidate]:
     candidates = {}
     for path in paths:
@@ -68,21 +80,14 @@ def read_saved_candidates(paths: list[Path]) -> list[EventCandidate]:
         if not isinstance(rows, list):
             raise ValueError("Candidate input must be a list")
         for row in rows:
-            candidate = EventCandidate(source_id=row["source_id"], source_url=row["source_url"],
-                detail_url=row["detail_url"], title_hint=row["title_hint"],
-                pdf_urls=tuple(row.get("pdf_urls", [])), published_at=row.get("published_at"),
-                discovery_method=row.get("discovery_method", "html"), block_text=row.get("block_text", ""),
-                extracted_fields={k: ExtractedField(v.get("value"), float(v.get("confidence", 0)), v.get("evidence"))
-                    for k, v in row.get("extracted_fields", {}).items()},
-                confidence_hint=float(row.get("confidence_hint", .5)),
-                pdf_documents=tuple(row.get("pdf_documents", [])),
-                extraction_warnings=tuple(row.get("extraction_warnings", [])))
+            candidate = candidate_from_payload(row)
             candidates[(candidate.source_id, candidate.detail_url, candidate.title_hint)] = candidate
     return list(candidates.values())
 
 
 def read_processed_keys(service, spreadsheet_id: str) -> set[str]:
-    rows = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range="AutoFieldValues!A:O").execute().get("values", [])
+    from ce_seminar_finder.sheets.requests import execute_idempotent
+    rows = execute_idempotent(service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range="AutoFieldValues!A:O")).get("values", [])
     if not rows:
         return set()
     headers, *values = rows
@@ -119,10 +124,24 @@ def refine_candidates(candidates: list[EventCandidate], service: ExtractionServi
                       checkpoint=None, checkpoint_size: int = 20, workers: int = 1) -> tuple[list[EventCandidate], dict]:
     processed = processed_keys or set()
     refined, skipped, errors, pending = [], 0, [], []
+    checkpoint_failed = False
     source_stats = {}
     provider = service.provider
     if not 1 <= workers <= 4:
         raise ValueError("workers must be between 1 and 4")
+
+    def flush():
+        nonlocal checkpoint_failed
+        if not checkpoint or not pending or checkpoint_failed:
+            return not checkpoint_failed
+        try:
+            checkpoint(list(pending))
+            pending.clear()
+            return True
+        except Exception as error:
+            checkpoint_failed = True
+            errors.append({"code": "CHECKPOINT_FAILED", "error_type": type(error).__name__})
+            return False
 
     def accept(candidate, key, result):
         from .validator import _ground_text
@@ -144,14 +163,13 @@ def refine_candidates(candidates: list[EventCandidate], service: ExtractionServi
         source_stats[candidate.source_id]["refined"] += 1
         processed.add(key)
         if checkpoint and len(pending) >= checkpoint_size:
-            checkpoint(list(pending))
-            pending.clear()
+            return not flush()
+        return False
 
     def finish(job):
         candidate, key, future = job
         try:
-            accept(candidate, key, future.result())
-            return False
+            return accept(candidate, key, future.result())
         except OpenAIExtractionError as error:
             if error.code == "REQUEST_LIMIT_REACHED":
                 return True
@@ -199,8 +217,10 @@ def refine_candidates(candidates: list[EventCandidate], service: ExtractionServi
         if not halted or not job[2].cancel():
             halted = finish(job) or halted  # Retain successful in-flight results.
     if checkpoint and pending:
-        checkpoint(pending)
+        halted = not flush() or halted
     return refined, {"input_candidates": len(candidates), "refined": len(refined), "skipped": skipped,
         "requests": getattr(provider, "requests", 0), "input_tokens": getattr(provider, "input_tokens", 0),
         "output_tokens": getattr(provider, "output_tokens", 0), "errors": errors,
-        "sources": source_stats, "halted": halted, **(pdf_loader.stats if pdf_loader else {})}
+        "sources": source_stats, "halted": halted,
+        "saved": len(refined) - len(pending) if checkpoint else 0,
+        "unsaved": len(pending), **(pdf_loader.stats if pdf_loader else {})}

@@ -8,9 +8,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-from ce_seminar_finder.extraction.refinement import candidate_content_hash
+from ce_seminar_finder.extraction.refinement import candidate_content_hash, candidate_payload
 from ce_seminar_finder.extraction.documents import pdf_evidence_location
 from ce_seminar_finder.collection.sources import source_config
+from ce_seminar_finder.sheets.requests import execute_idempotent
 from ce_seminar_finder.sheets.schema import (
     AUTO_FIELD_HEADERS, EVENTS_HEADERS, EVENT_SOURCES_HEADERS, REVIEW_QUEUE_HEADERS, DUPLICATE_HEADERS,
     DOCUMENTS_HEADERS, DOCUMENT_TEXT_HEADERS,
@@ -45,7 +46,7 @@ class CandidateIngestor:
 
     def _rows(self, sheet, width):
         column = self._column(width)
-        rows = self.api.get(spreadsheetId=self.spreadsheet_id, range=f"'{sheet}'!A:{column}").execute().get("values", [])
+        rows = execute_idempotent(self.api.get(spreadsheetId=self.spreadsheet_id, range=f"'{sheet}'!A:{column}")).get("values", [])
         if not rows:
             raise ValueError(f"Missing sheet headers: {sheet}")
         headers = rows[0]
@@ -65,8 +66,7 @@ class CandidateIngestor:
             return
         specs = {"Events": EVENTS_HEADERS, "EventSources": EVENT_SOURCES_HEADERS,
                  "ReviewQueue": REVIEW_QUEUE_HEADERS, "AutoFieldValues": AUTO_FIELD_HEADERS, "DuplicateCandidates": DUPLICATE_HEADERS}
-        if any(c.pdf_documents for c in candidates):
-            specs.update({"Documents": DOCUMENTS_HEADERS, "DocumentTextChunks": DOCUMENT_TEXT_HEADERS})
+        specs.update({"Documents": DOCUMENTS_HEADERS, "DocumentTextChunks": DOCUMENT_TEXT_HEADERS})
         rows = {name: self._rows(name, len(headers)) for name, headers in specs.items()}
         original_events = {r["__row_number"]: dict(r) for r in rows["Events"]}
         by_url = {canonical_url(str(e.get("primary_official_url", ""))): e for e in rows["Events"] if e.get("event_id")}
@@ -120,6 +120,35 @@ class CandidateIngestor:
                 by_id[event_id] = event
                 by_url.setdefault(url, event)
             event_id = event["event_id"]
+            snapshot_id = stable_id("snap_", event_source_id)
+            if not candidate.ai_result and (candidate.block_text.strip() or candidate.pdf_urls
+                    or snapshot_id not in documents_by_id):
+                # Original public input is held only in the private management
+                # sheet. AI checkpoints must not replace this with AI output.
+                from .snapshots import SNAPSHOT_METHOD
+                text = json.dumps(candidate_payload(candidate), ensure_ascii=False, sort_keys=True)
+                row = dict(documents_by_id.get(snapshot_id, {}))
+                row.update({"document_id": snapshot_id, "event_source_id": event_source_id,
+                    "document_type": "other", "url": candidate.detail_url, "final_url": candidate.detail_url,
+                    "mime_type": "application/json", "fetched_at": now, "extraction_method": SNAPSHOT_METHOD,
+                    "extraction_status": "success", "text_length": len(text), "page_count": 1,
+                    "text_quality_score": 1, "sha256": hashlib.sha256(text.encode()).hexdigest()})
+                save("Documents", row)
+                documents_by_id[snapshot_id] = row
+                segments = [text[i:i+4000] for i in range(0, len(text), 4000)]
+                for index, segment in enumerate(segments):
+                    key = (snapshot_id, str(index))
+                    part = dict(chunks_by_id.get(key, {}))
+                    part.update({"document_id": snapshot_id, "chunk_index": index, "page_from": 1, "page_to": 1,
+                        "text": segment, "text_hash": hashlib.sha256(segment.encode()).hexdigest(), "is_searchable": False})
+                    save("DocumentTextChunks", part)
+                    chunks_by_id[key] = part
+                # A shorter replacement must not leave stale JSON suffixes.
+                for key, part in list(chunks_by_id.items()):
+                    if key[0] == snapshot_id and int(key[1]) >= len(segments):
+                        part = {**part, "text": "", "text_hash": "", "is_searchable": False}
+                        save("DocumentTextChunks", part)
+                        chunks_by_id[key] = part
             pdf_ids = {}
             for document in candidate.pdf_documents:
                 doc_id = stable_id("doc_", event_source_id, document["url"], document.get("sha256", ""))
@@ -314,16 +343,27 @@ class CandidateIngestor:
                     item["values"][0][AUTO_FIELD_HEADERS.index("accepted")] = False
             if self.ensure_capacity:
                 self.ensure_capacity({name: number-1 for name, number in next_row.items()})
-            # Bounded writes avoid Sheets request-size limits during a full rollout.
-            batch, size = [], 0
-            for item in writes.values():
-                item_size = len(json.dumps(item, ensure_ascii=False).encode())
-                if batch and (len(batch) >= 100 or size + item_size > 1_500_000):
-                    self.api.batchUpdate(spreadsheetId=self.spreadsheet_id,
-                        body={"valueInputOption": "RAW", "data": batch}).execute()
-                    batch, size = [], 0
-                batch.append(item)
-                size += item_size
-            if batch:
-                self.api.batchUpdate(spreadsheetId=self.spreadsheet_id,
-                    body={"valueInputOption": "RAW", "data": batch}).execute()
+            # Persist the processed-key marker only after every field/document
+            # write succeeded. A partial save must remain resumable.
+            markers, ordinary = [], []
+            for (name, _), item in writes.items():
+                is_marker = name == "AutoFieldValues" and item["values"][0][AUTO_FIELD_HEADERS.index("field_name")] == "is_event"
+                (markers if is_marker else ordinary).append(item)
+            self._write_batches(ordinary)
+            self._write_batches(markers)
+
+    def _write_batches(self, items):
+        # All these explicit range updates are idempotent: retrying cannot
+        # append a duplicate event, field, or document.
+        batch, size = [], 0
+        for item in items:
+            item_size = len(json.dumps(item, ensure_ascii=False).encode())
+            if batch and (len(batch) >= 100 or size + item_size > 1_500_000):
+                execute_idempotent(self.api.batchUpdate(spreadsheetId=self.spreadsheet_id,
+                    body={"valueInputOption": "RAW", "data": batch}))
+                batch, size = [], 0
+            batch.append(item)
+            size += item_size
+        if batch:
+            execute_idempotent(self.api.batchUpdate(spreadsheetId=self.spreadsheet_id,
+                body={"valueInputOption": "RAW", "data": batch}))

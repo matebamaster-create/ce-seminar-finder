@@ -159,7 +159,8 @@ def _parser() -> argparse.ArgumentParser:
     import_events.add_argument("--input", type=Path, required=True)
 
     refine = subparsers.add_parser("refine-candidates", help="公式候補をAIで補足し、確認待ちへ反映します（自動公開なし）")
-    refine.add_argument("--input", type=Path, nargs="+", required=True)
+    refine.add_argument("--input", type=Path, nargs="+", default=[])
+    refine.add_argument("--from-sheet", action="store_true", help="非公開の保存済み候補からAI処理だけを再開します")
     refine.add_argument("--output", type=Path, required=True)
     refine.add_argument("--summary", type=Path)
     refine.add_argument("--max-calls", type=int, default=0, help="API回数上限。0は件数制限なし")
@@ -192,8 +193,20 @@ def main(argv: list[str] | None = None) -> int:
         except OpenAIExtractionError as error:
             print(json.dumps({"status": "failed", "code": error.code}))
             return 1
-        candidates = read_saved_candidates(args.input)
         google = load_google_service() if args.spreadsheet_id else None
+        if args.from_sheet:
+            if not google:
+                raise ValueError("--from-sheet requires --spreadsheet-id")
+            from ce_seminar_finder.collection.snapshots import read_candidate_snapshots
+            candidates = read_candidate_snapshots(google, args.spreadsheet_id)
+            if not candidates:
+                raise ValueError("No private candidate snapshots; collect the enabled sources first")
+            enabled = {s.source_id for s in source_configs_from_sheet(google, args.spreadsheet_id) if s.enabled}
+            candidates = [c for c in candidates if c.source_id in enabled]
+        else:
+            if not args.input:
+                raise ValueError("--input or --from-sheet is required")
+            candidates = read_saved_candidates(args.input)
         processed = read_processed_keys(google, args.spreadsheet_id) if google else set()
         extractor = ExtractionService(provider, prompt_version=PROMPT_VERSION, cache=JsonExtractionCache(args.cache))
         pdf_loader = PdfContextLoader(args.cache.parent / "pdf-documents") if args.include_pdf else None
@@ -209,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps([candidate_payload(c) for c in refined], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         summary.update({"model": args.model, "prompt_version": PROMPT_VERSION,
-            "sheet_updated": bool(google and refined), "auto_published": False})
+            "sheet_updated": bool(google and summary["saved"]), "auto_published": False})
         if args.summary:
             args.summary.parent.mkdir(parents=True, exist_ok=True)
             args.summary.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

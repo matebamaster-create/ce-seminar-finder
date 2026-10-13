@@ -22,6 +22,11 @@ on:
         required: true
         default: false
         type: boolean
+      resume_ai:
+        description: "保存済みの非公開候補からAI処理だけを再開する（再収集なし）"
+        required: true
+        default: false
+        type: boolean
       publish:
         description: "Sheetsから公開サイトを再生成する"
         required: true
@@ -70,12 +75,12 @@ jobs:
         if: github.event_name == 'push' || inputs.sync_current_events
         run: python -m ce_seminar_finder.cli init-sheet --spreadsheet-id "$CE_SPREADSHEET_ID"
       - name: Install public-page renderer
-        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all
+        if: ${{ !inputs.resume_ai && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all) }}
         run: |
           npm install --prefix /tmp/ce-browser --no-save playwright
           /tmp/ce-browser/node_modules/.bin/playwright install --with-deps chromium
       - name: Collect explicitly enabled sources
-        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all
+        if: ${{ !inputs.resume_ai && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all) }}
         env:
           NODE_PATH: /tmp/ce-browser/node_modules
           FULL_DETAIL: ${{ inputs.full_detail }}
@@ -100,20 +105,30 @@ jobs:
             if [[ -f "$summary" ]]; then cat "$summary" >> "$GITHUB_STEP_SUMMARY"; fi
           done
       - name: Install Japanese PDF OCR
-        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all
+        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-jpn tesseract-ocr-eng
+      - name: Refresh existing Google connection before AI
+        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
       - name: Refine all public candidates with AI and PDF (never auto-publish)
-        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all
+        id: ai-refine
+        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai
         continue-on-error: true
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RESUME_AI: ${{ inputs.resume_ai }}
         run: |
           if [[ -z "$OPENAI_API_KEY" ]]; then
             echo "AIは未接続です。通常収集と承認済み情報の公開を継続します。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          input=(--input var/*/candidates.json)
+          if [[ "$RESUME_AI" == "true" ]]; then input=(--from-sheet); fi
           python -m ce_seminar_finder.cli refine-candidates \
-            --input var/*/candidates.json --max-calls 0 --include-pdf \
+            "${input[@]}" --max-calls 0 --include-pdf \
             --spreadsheet-id "$CE_SPREADSHEET_ID" \
             --output var/ai-refined.json --summary var/ai-summary.json
       - name: Add bounded AI summary
@@ -121,6 +136,13 @@ jobs:
         run: |
           if [[ -f var/ai-summary.json ]]; then
             python -c 'import json,os; s=json.load(open("var/ai-summary.json")); text="\n## AI補足（自動公開なし）\n候補反映: {}件 / API呼び出し: {}回 / 入力: {} tokens / 出力: {} tokens / エラー: {}件\n".format(s["refined"],s["requests"],s["input_tokens"],s["output_tokens"],len(s["errors"])); open(os.environ["GITHUB_STEP_SUMMARY"],"a").write(text)'
+            if ! python -c 'import json,sys; sys.exit(bool(json.load(open("var/ai-summary.json"))["errors"]))'; then
+              echo "::warning::AI処理は途中停止です。保存済み候補から再開してください。"
+              echo "⚠️ AI処理は未完了です。保存済み候補から再開できます。" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          elif [[ "${{ steps.ai-refine.outcome }}" == "failure" ]]; then
+            echo "::warning::AI処理が集計前に停止しました。未完了として確認してください。"
+            echo "⚠️ AI処理は集計前に停止し、未完了です。" >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Archive and export approved events
         id: public-data

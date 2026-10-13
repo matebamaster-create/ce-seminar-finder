@@ -628,7 +628,9 @@
         if (row.evidence) card.append(el("blockquote", "", row.evidence));
         if (row.pdf_url) {
           const link = el("a", "", "PDF原本を見る" + (row.page_from ? `（${row.page_from}${row.page_to > row.page_from ? "～" + row.page_to : ""}ページ）` : ""));
-          link.href = row.pdf_url; link.target = "_blank"; link.rel = "noopener noreferrer";
+          const page = Math.max(1, Math.floor(Number(row.page_from) || 1));
+          link.href = String(row.pdf_url).split("#")[0] + "#page=" + page;
+          link.target = "_blank"; link.rel = "noopener noreferrer";
           card.append(link);
         }
         return card;
