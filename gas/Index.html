@@ -59,7 +59,7 @@
     }
     .topbar h1 { margin: 0; font-size: 21px; }
     .topbar p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
-    .actions { display: flex; gap: 10px; align-items: center; }
+    .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .button {
       border: 1px solid var(--primary); border-radius: 10px; padding: 10px 15px;
       background: var(--primary); color: #fff; font-weight: 700;
@@ -214,6 +214,7 @@
         <div class="actions">
           <a class="button secondary" href="https://matebamaster-create.github.io/ce-seminar-finder/events/" target="_blank" rel="noopener">公開ページを見る</a>
           <button class="button" id="publish-button">公開ページを更新</button>
+          <button class="button secondary" id="connection-button">認証設定を更新</button>
         </div>
       </header>
       <div class="content">
@@ -329,6 +330,21 @@
       </div>
     </div>
   </div>
+  <div class="modal" id="connection-modal" role="dialog" aria-modal="true" aria-labelledby="connection-title" hidden>
+    <div class="modal-card" style="max-width:560px">
+      <div class="modal-head"><h2 id="connection-title">GitHub接続の認証更新</h2></div>
+      <div style="padding:20px;display:grid;gap:16px">
+        <p class="panel-sub">既存トークンを同じ権限で再発行し、ここへ貼り付けてください。対象リポジトリ・権限は変更しません。キー本文をチャットへ送る必要はありません。</p>
+        <label for="github-token">GitHubトークン（認証用の秘密の文字列）</label>
+        <input id="github-token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-help">
+        <p class="panel-sub" id="connection-help">保存先は、この管理画面の非公開設定です。キーをシート・操作履歴・公開サイトには保存しません。保存前の接続テストで公開ページ更新を1回起動します。</p>
+      </div>
+      <div class="modal-actions">
+        <button class="button secondary" id="cancel-connection">キャンセル</button>
+        <button class="button" id="save-connection">接続を確認して保存</button>
+      </div>
+    </div>
+  </div>
   <div class="toast" id="toast" hidden></div>
 
   <script>
@@ -349,6 +365,9 @@
     document.getElementById("event-status").addEventListener("change", renderEvents);
     document.getElementById("event-prefecture").addEventListener("change", renderEvents);
     document.getElementById("publish-button").addEventListener("click", publishSite);
+    document.getElementById("connection-button").addEventListener("click", openConnection);
+    document.getElementById("cancel-connection").addEventListener("click", closeConnection);
+    document.getElementById("save-connection").addEventListener("click", saveConnection);
     document.getElementById("close-modal").addEventListener("click", closeEditor);
     document.getElementById("cancel-edit").addEventListener("click", closeEditor);
     document.getElementById("save-event").addEventListener("click", saveEvent);
@@ -622,6 +641,28 @@
         .publishAdminSite();
     }
 
+    function openConnection() {
+      document.getElementById("github-token").value = "";
+      document.getElementById("connection-modal").hidden = false;
+      document.getElementById("github-token").focus();
+    }
+    function closeConnection() {
+      document.getElementById("github-token").value = "";
+      document.getElementById("connection-modal").hidden = true;
+    }
+    function saveConnection() {
+      const input = document.getElementById("github-token");
+      const token = input.value.trim();
+      if (!token) return showToast("GitHubで再発行したトークンを入力してください。", true);
+      // Remove the secret from the rendered form immediately; never log or retain it in state.
+      input.value = "";
+      setLoading(true);
+      google.script.run.withSuccessHandler(result => {
+        closeConnection(); showToast(result.message); loadData();
+      }).withFailureHandler(error => {
+        input.value = ""; handleError(error);
+      }).updateGithubConnectionFromAdmin(token);
+    }
     function setLoading(value) { document.getElementById("loading").hidden = !value; }
     function handleError(error) { setLoading(false); showToast(error.message || String(error), true); }
     function showToast(message, error = false) {

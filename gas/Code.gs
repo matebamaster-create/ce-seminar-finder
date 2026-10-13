@@ -684,11 +684,46 @@ function githubWorkflowConnection_() {
   }
 }
 
-function dispatchDailyWorkflow_(sourceIds, publish) {
+function updateGithubConnectionFromAdmin(tokenInput) {
+  const actor = requireAdmin_();
+  const ownerEmail = Session.getEffectiveUser().getEmail();
+  if (!ownerEmail || actor.toLowerCase() !== ownerEmail.toLowerCase()) {
+    throw new Error("認証の更新は、この管理画面の所有者だけが行えます。");
+  }
+  const token = typeof tokenInput === "string" ? tokenInput.trim() : "";
+  if (!/^github_pat_[A-Za-z0-9_]{20,240}$/.test(token)) {
+    throw new Error("GitHubで再発行した、権限を限定したトークンを入力してください。");
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("処理中です。少し待ってから再試行してください。");
+  try {
+    // Validate actual Actions write access before replacing the stored credential.
+    // Only this project's existing workflow is dispatched; the destination is not editable.
+    dispatchDailyWorkflow_("", true, token);
+    PropertiesService.getScriptProperties().setProperty("GITHUB_TOKEN", token);
+    let auditSaved = true;
+    try {
+      const spreadsheet = adminSpreadsheet_();
+      appendByHeaders_(requiredSheet_(spreadsheet, "ReviewActions"), {
+        action_id: "act_" + Utilities.getUuid().replace(/-/g, ""), event_id: "",
+        action: "github_connection_update", actor: actor, acted_at: new Date().toISOString(),
+        note: "既存の公開更新処理への接続を更新。認証情報は履歴に保存しません。",
+      });
+    } catch (error) {
+      auditSaved = false;
+    }
+    return {ok: true, message: "GitHub接続を更新し、公開ページの更新を起動しました。" +
+      (auditSaved ? "" : " 接続は保存済みですが、操作履歴の記録に失敗しました。")};
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function dispatchDailyWorkflow_(sourceIds, publish, tokenOverride) {
   const properties = PropertiesService.getScriptProperties();
   const owner = properties.getProperty("GITHUB_OWNER");
   const repository = properties.getProperty("GITHUB_REPOSITORY");
-  const token = properties.getProperty("GITHUB_TOKEN");
+  const token = tokenOverride || properties.getProperty("GITHUB_TOKEN");
   const ref = properties.getProperty("GITHUB_REF") || "main";
   if (!owner || !repository || !token) {
     throw new Error(
@@ -701,24 +736,30 @@ function dispatchDailyWorkflow_(sourceIds, publish) {
     "/" +
     encodeURIComponent(repository) +
     "/actions/workflows/daily.yml/dispatches";
-  const response = UrlFetchApp.fetch(endpoint, {
-    method: "post",
-    contentType: "application/json",
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: "Bearer " + token,
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-    payload: JSON.stringify({
-      ref: ref,
-      inputs: {
-        source_ids: String(sourceIds || ""),
-        publish: publish ? "true" : "false",
-        sync_current_events: "false",
+  let response;
+  try {
+    response = UrlFetchApp.fetch(endpoint, {
+      method: "post",
+      contentType: "application/json",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: "Bearer " + token,
+        "X-GitHub-Api-Version": "2022-11-28",
       },
-    }),
-    muteHttpExceptions: true,
-  });
+      payload: JSON.stringify({
+        ref: ref,
+        inputs: {
+          source_ids: String(sourceIds || ""),
+          publish: publish ? "true" : "false",
+          sync_current_events: "false",
+        },
+      }),
+      muteHttpExceptions: true,
+    });
+  } catch (error) {
+    // Never expose request headers, response bodies, or submitted credentials.
+    throw new Error("GitHubへ接続できませんでした。認証は変更していません。");
+  }
   if (response.getResponseCode() !== 204) {
     throw new Error(
       "GitHub Actionsを起動できませんでした（HTTP " +
