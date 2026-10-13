@@ -171,6 +171,17 @@ class CandidateIngestor:
             if candidate.ai_result:
                 result = candidate.ai_result
                 classification = dict(classification)
+                try:
+                    previous_location = json.loads(classification.get("evidence_location") or "{}")
+                except (ValueError, TypeError):
+                    previous_location = {}
+                if not isinstance(previous_location, dict):
+                    previous_location = {}
+                previous_keys = previous_location.get("processed_cache_keys", [])
+                if not isinstance(previous_keys, list):
+                    previous_keys = []
+                processed_keys = {key for key in [*previous_keys, previous_location.get("cache_key"), candidate.ai_cache_key]
+                                  if isinstance(key, str) and key}
                 classification.update({"value_id": classification_id, "event_id": event_id,
                     "field_name": "is_event", "extracted_value_json": json.dumps(result.is_event),
                     "normalized_value_json": json.dumps(result.is_event), "confidence": result.event_confidence,
@@ -178,6 +189,7 @@ class CandidateIngestor:
                     "prompt_version": result.prompt_version, "source_document_id": event_source_id,
                     "evidence_text": candidate.title_hint[:300], "evidence_location": json.dumps({
                         "cache_key": candidate.ai_cache_key, "content_hash": candidate_content_hash(candidate),
+                        "processed_cache_keys": sorted(processed_keys),
                         "review_reasons": list(result.review_reasons)}, ensure_ascii=False),
                     "extracted_at": now, "accepted": False})
                 save("AutoFieldValues", classification)

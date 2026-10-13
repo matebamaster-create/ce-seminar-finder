@@ -97,8 +97,12 @@ def read_processed_keys(service, spreadsheet_id: str) -> set[str]:
         if row.get("field_name") != "is_event" or row.get("extractor") != "ai":
             continue
         try:
-            key = json.loads(row.get("evidence_location") or "{}").get("cache_key")
-            if key: keys.add(key)
+            location = json.loads(row.get("evidence_location") or "{}")
+            key = location.get("cache_key")
+            if isinstance(key, str) and key: keys.add(key)
+            history = location.get("processed_cache_keys", [])
+            if isinstance(history, list):
+                keys.update(key for key in history if isinstance(key, str) and key)
         except (ValueError, AttributeError):
             pass
     return keys

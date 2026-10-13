@@ -64,6 +64,30 @@ class RefinementTest(unittest.TestCase):
         self.assertEqual("ai", auto["extractor"])
         self.assertIn("AI_SOURCE_CHANGED", sheets.objects("ReviewQueue")[0]["reason_codes"])
 
+    def test_changed_input_keeps_previously_completed_key(self):
+        sheets = FakeSheets()
+        ingestor = CandidateIngestor(sheets, "test")
+        first, _ = refine_candidates([candidate()], extractor(ai_payload()))
+        ingestor.ingest(first)
+        changed = replace(candidate(), block_text=candidate().block_text + "\n追加のお知らせ")
+        second, _ = refine_candidates([changed], extractor(ai_payload()))
+        ingestor.ingest(second)
+        keys = read_processed_keys(sheets, "test")
+        self.assertEqual(2, len(keys))
+        replay, stats = refine_candidates([candidate()], extractor(ai_payload()), processed_keys=keys)
+        self.assertEqual([], replay)
+        self.assertEqual(0, stats["requests"])
+
+    def test_same_event_inputs_in_one_checkpoint_keep_both_keys(self):
+        sheets = FakeSheets()
+        changed = replace(candidate(), block_text=candidate().block_text + "\n別の公開本文")
+        refined, stats = refine_candidates([candidate(), changed], extractor(ai_payload()))
+        self.assertEqual(2, stats["requests"])
+        CandidateIngestor(sheets, "test").ingest(refined)
+        markers = [row for row in sheets.objects("AutoFieldValues") if row["field_name"] == "is_event"]
+        self.assertEqual(1, len(markers))
+        self.assertEqual(2, len(read_processed_keys(sheets, "test")))
+
     def test_ai_never_overwrites_admin_values_or_publication_decision(self):
         sheets = FakeSheets()
         ingestor = CandidateIngestor(sheets, "test")
