@@ -92,7 +92,7 @@ def validate_extraction(
             value = None
             confidence = 0.0
             reasons.append(f"{name.upper()}_EVIDENCE_MISSING")
-        if value is not None and evidence and source_text is not None:
+        if value is not None and evidence and source_text is not None and name not in URL_FIELDS:
             if _ground_text(evidence) not in _ground_text(source_text):
                 value, confidence = None, 0.0
                 reasons.append(f"{name.upper()}_EVIDENCE_NOT_IN_SOURCE")

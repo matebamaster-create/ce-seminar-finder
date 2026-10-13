@@ -50,5 +50,5 @@ class ExtractionService:
             source_text=source_text,
         )
         if self.cache:
-            self.cache.put(key, result.as_dict())
+            self.cache.put(key, raw)  # Revalidate the original response after policy improvements.
         return replace(result, cache_hit=False)

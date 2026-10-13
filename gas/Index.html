@@ -458,14 +458,14 @@
       const fields = dashboard
         ? [
             titleCell(event),
-            textCell(shortDate(event.event_start_at || event.stream_start_at)),
+            textCell(shortDate(event.event_start_at || event.stream_start_at, event.event_date_precision)),
             textCell(event.source_prefecture || "—"),
             badgeCell(event.publication_status),
             badgeCell(event.review_label === "あり" ? "要確認" : "確認済み"),
           ]
         : [
             titleCell(event),
-            textCell(shortDate(event.event_start_at || event.stream_start_at)),
+            textCell(shortDate(event.event_start_at || event.stream_start_at, event.event_date_precision)),
             textCell(event.format || "要確認"),
             textCell(event.source_prefecture || "—"),
             badgeCell(event.publication_status),

@@ -120,6 +120,11 @@ class GroundingTest(unittest.TestCase):
             "evidence": "開催日時 2026年11月20日 18:00～20:00"}})
         self.assertEqual("2026-11-20T20:00:00+09:00", result.fields["event_end"].value)
 
+    def test_discovered_url_is_grounded_by_allowlist_not_body_quote(self):
+        result = self.validate({"official_url": {"value": "https://example.test/event", "confidence": 1,
+            "evidence": "https://example.test/event"}})
+        self.assertEqual("https://example.test/event", result.fields["official_url"].value)
+
     def test_service_revalidates_cached_evidence_against_input(self):
         raw = {"is_event": True, "event_confidence": 1, "fields": {"organizer": {
             "value": "存在しない主催者", "confidence": 1, "evidence": "存在しない主催者"}}}
