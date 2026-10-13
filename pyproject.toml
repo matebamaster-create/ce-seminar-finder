@@ -17,7 +17,7 @@ google = [
   "google-auth>=2.38,<3",
 ]
 pdf = [
-  "pypdf>=5.3,<7",
+  "pypdf[fonts]>=6.20,<7",
 ]
 dev = []
 

@@ -15,7 +15,7 @@ from ce_seminar_finder.collection.robots import RobotsPolicy
 from ce_seminar_finder.collection.sources import source_config
 from .pdf import MAX_PDF_BYTES, LocalOcrProvider, extract_pdf
 
-PDF_PROCESSOR_VERSION = "pdf-text-ocr-v1"
+PDF_PROCESSOR_VERSION = "pdf-text-ocr-fonts-v2"
 
 
 class PdfContextLoader:
