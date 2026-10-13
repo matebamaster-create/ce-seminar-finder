@@ -77,7 +77,9 @@ class SourceCollector:
         technical_holds: list[str] = []
         failures = 0
 
-        for url in source.discovery_urls:
+        discovery_urls = list(source.discovery_urls)
+        known_discovery_urls = set(discovery_urls)
+        for url in discovery_urls:
             if request_count >= source.max_requests_per_run:
                 result.warnings.append("MAX_REQUESTS_REACHED")
                 break
@@ -107,6 +109,12 @@ class SourceCollector:
                 except Exception as exc:
                     result.warnings.append("BROWSER_RENDER_FAILED:" + type(exc).__name__)
             candidates.extend(parsed.candidates)
+            # Only explicit pagination supplied by a site-specific adapter is
+            # followed. Ordinary links/discovered URLs never become a crawl.
+            for next_url in parsed.pagination_urls:
+                if next_url not in known_discovery_urls:
+                    known_discovery_urls.add(next_url)
+                    discovery_urls.append(next_url)
             result.warnings.extend(parsed.warnings)
             if parsed.technical_hold_reason:
                 technical_holds.append(parsed.technical_hold_reason)
@@ -116,6 +124,10 @@ class SourceCollector:
         detail_fetches = 0
         hosts = allowed_hosts(source)
         for candidate in candidates:
+            if candidate.discovery_method == "wordpress_public_post":
+                # Public JSON already contains this exact post's full body.
+                enriched.append(candidate)
+                continue
             if max_detail_pages is not None and detail_fetches >= max_detail_pages:
                 enriched.append(candidate)
                 continue

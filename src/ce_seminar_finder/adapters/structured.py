@@ -1,15 +1,67 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import replace
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode
 
 from bs4 import BeautifulSoup
 
 from ce_seminar_finder.collection.models import AdapterResult, EventCandidate
 from ce_seminar_finder.extraction.rules import extract_rule_values, DATE_PATTERN, _normalized
 from .common import PatternHtmlAdapter, _deduplicate_candidates, is_event_like, is_pdf_url, is_title_hint
+
+
+class TottoriPublicPostsAdapter(PatternHtmlAdapter):
+    """Official unauthenticated WordPress posts, never drafts or protected text."""
+    def __init__(self):
+        super().__init__(detail_patterns=(r"/news/",), include_event_text_links=True)
+
+    def parse(self, source, document):
+        if "json" not in document.content_type:
+            return super().parse(source, document)
+        try:
+            posts = json.loads(document.body)
+        except (ValueError, TypeError):
+            return AdapterResult(warnings=("PUBLIC_JSON_INVALID",))
+        if not isinstance(posts, list):
+            return AdapterResult(warnings=("PUBLIC_JSON_INVALID",))
+        candidates = []
+        for post in posts:
+            if not isinstance(post, dict) or post.get("status") != "publish":
+                continue
+            content = post.get("content") or {}
+            if not isinstance(content, dict) or content.get("protected"):
+                continue
+            title_value = post.get("title") or {}
+            if not isinstance(title_value, dict):
+                continue
+            title = BeautifulSoup(str(title_value.get("rendered", "")), "html.parser").get_text(" ", strip=True)
+            link = str(post.get("link") or "")
+            if not is_title_hint(title) or urlsplit(link).hostname != urlsplit(source.base_url).hostname:
+                continue
+            block = BeautifulSoup(str(content.get("rendered", "")), "html.parser")
+            for node in block.select("script,style,noscript,iframe"):
+                node.decompose()
+            links = tuple(dict.fromkeys(urljoin(link, a["href"]) for a in block.select("a[href]")))
+            text = title + "\n" + block.get_text("\n", strip=True)
+            candidates.append(EventCandidate(source.source_id, document.final_url, link, title,
+                block_text=text[:16000], pdf_urls=tuple(u for u in links if is_pdf_url(u)),
+                discovery_method="wordpress_public_post", confidence_hint=.9,
+                extracted_fields=extract_rule_values(text, allowed_urls=links, title_hint=title)))
+        pagination = ()
+        try:
+            parts = urlsplit(document.final_url)
+            query = dict(parse_qsl(parts.query))
+            page = int(query.get("page", "1"))
+            total_pages = int(document.headers.get("x-wp-totalpages", "1"))
+            if page >= 1 and page < total_pages and parts.path.rstrip("/") == "/wp-json/wp/v2/posts":
+                query["page"] = str(page + 1)
+                pagination = (urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), "")),)
+        except (TypeError, ValueError):
+            pass
+        return AdapterResult(candidates=tuple(candidates), pagination_urls=pagination)
 
 
 def candidate_from_block(source, document, title, block, *, anchor="", method="structured_html"):

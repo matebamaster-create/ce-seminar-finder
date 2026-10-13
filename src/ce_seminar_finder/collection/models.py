@@ -105,6 +105,7 @@ class AdapterResult:
     pdf_urls: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     technical_hold_reason: str | None = None
+    pagination_urls: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
