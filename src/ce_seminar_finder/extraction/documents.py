@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -131,6 +132,15 @@ def pdf_evidence_location(candidate, evidence: str) -> dict:
     for document in candidate.pdf_documents:
         for chunk in document.get("chunks", []):
             if _ground_text(evidence) in _ground_text(chunk["text"]):
+                page_from, page_to = chunk["page_from"], chunk["page_to"]
+                # A short chunk can contain many pages. Prefer the actual page
+                # containing the quote, rather than opening the chunk's first.
+                pieces = re.split(r"(?m)^\[page (\d+)\]\s*$", chunk["text"])
+                for index in range(1, len(pieces) - 1, 2):
+                    page = int(pieces[index])
+                    if page_from <= page <= page_to and _ground_text(evidence) in _ground_text(pieces[index + 1]):
+                        page_from = page_to = page
+                        break
                 return {"pdf_url": document["url"], "pdf_sha256": document.get("sha256", ""),
-                        "page_from": chunk["page_from"], "page_to": chunk["page_to"]}
+                        "page_from": page_from, "page_to": page_to}
     return {}

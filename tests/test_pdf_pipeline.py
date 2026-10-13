@@ -15,7 +15,7 @@ from test_ai_refinement import extractor
 from ce_seminar_finder.collection.ingestion import CandidateIngestor
 from ce_seminar_finder.collection.models import FetchOutcome, FetchResponse
 from ce_seminar_finder.extraction.cache import JsonExtractionCache
-from ce_seminar_finder.extraction.documents import PdfContextLoader
+from ce_seminar_finder.extraction.documents import PdfContextLoader, pdf_evidence_location
 from ce_seminar_finder.extraction.pdf import LocalOcrProvider, extract_pdf
 from ce_seminar_finder.extraction.refinement import refine_candidates, fit_request, extraction_request
 from ce_seminar_finder.extraction.prompt import build_extraction_messages
@@ -44,6 +44,14 @@ class PdfPipelineTest(unittest.TestCase):
     def loader(self, path, fetcher=None):
         return PdfContextLoader(path, fetcher=fetcher or Fetcher(),
             extractor=lambda data, **kwargs: extract_pdf(data, backend=Backend(), **kwargs))
+
+    def test_quote_location_uses_actual_page_inside_multi_page_chunk(self):
+        item = replace(candidate(), pdf_documents=({"url": "https://www.narace.jp/one.pdf", "sha256": "abc",
+            "chunks": [{"text": "[page 1]\n呼吸セミナー\n[page 2]\n参加費 会員500円 非会員1000円",
+                        "page_from": 1, "page_to": 2}]},))
+        location = pdf_evidence_location(item, "参加費 会員500円 非会員1000円")
+        self.assertEqual(2, location["page_from"])
+        self.assertEqual(2, location["page_to"])
 
     def test_pdf_only_candidate_is_extracted_and_persisted_with_pages_and_provenance(self):
         with tempfile.TemporaryDirectory() as directory:
