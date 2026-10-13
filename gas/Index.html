@@ -158,6 +158,10 @@
     .preview-card dl { display: grid; gap: 7px; }
     .preview-card dl div { display: grid; grid-template-columns: 62px 1fr; }
     .preview-card dt { color: var(--muted); }
+    .extraction-details { margin-top: 20px; }
+    .extraction-item { border: 1px solid var(--line); border-radius: 9px; background: white; padding: 12px; margin-top: 9px; overflow-wrap: anywhere; }
+    .extraction-item p { margin: 6px 0; font-size: 13px; white-space: pre-wrap; }
+    .extraction-item blockquote { margin: 8px 0 0; border-left: 3px solid #bcd8dc; padding-left: 9px; color: var(--muted); font-size: 12px; white-space: pre-wrap; }
     .modal-actions {
       position: sticky; bottom: 0; background: #fff; border-top: 1px solid var(--line);
       padding: 15px 20px; display: flex; justify-content: flex-end; gap: 9px;
@@ -296,6 +300,7 @@
           <label>会場名<input name="venue_name"></label>
           <label>開催開始<input name="event_start_at"></label>
           <label>開催終了<input name="event_end_at"></label>
+          <label>開催時刻の確認<select name="event_date_precision"><option value="">未設定</option><option value="date">日付のみ（時刻不明）</option><option value="datetime">時刻まで確認できた</option></select></label>
           <label>配信開始<input name="stream_start_at"></label>
           <label>配信終了<input name="stream_end_at"></label>
           <label>申込締切<input name="application_deadline_at"></label>
@@ -322,6 +327,11 @@
             </dl>
             <p id="preview-organizer"></p>
           </div>
+          <section class="extraction-details" aria-label="自動抽出の根拠">
+            <h3>自動抽出の根拠</h3>
+            <p class="panel-sub">AI・ルールの提案です。確信度は正確さの保証ではありません。原文を確認してから保存・公開してください。</p>
+            <div id="extraction-details"></div>
+          </section>
         </aside>
       </div>
       <div class="modal-actions">
@@ -354,7 +364,7 @@
       "publication_status","review_status","review_label","review_reason_display","title","summary",
       "event_type","genres","detailed_tags","organizer_name","organizer_type","source_prefecture",
       "venue_prefecture","venue_name","format","audience_conditions","capacity_text","credits_text",
-      "event_start_at","event_end_at","stream_start_at","stream_end_at","application_deadline_at",
+      "event_start_at","event_end_at","event_date_precision","stream_start_at","stream_end_at","application_deadline_at",
       "effective_end_at","fee_category","fee_text","primary_official_url","application_url",
       "primary_pdf_url","admin_note"
     ];
@@ -487,8 +497,14 @@
       const labels = {DATE_UNKNOWN: "開催日が不明", ORGANIZER_UNKNOWN: "主催者が不明",
         FORMAT_UNKNOWN: "開催形式が不明", DEADLINE_UNKNOWN: "申込締切が不明", FEE_UNKNOWN: "参加費が不明",
         HIGH_IMPACT_FIELD_CHANGED: "公開情報に重要な変更あり", ADMIN_REVIEW_REQUIRED: "管理者の確認が必要",
-        DUPLICATE_CANDIDATE: "同じイベントの可能性", LOW_CONFIDENCE: "抽出内容の確認が必要"};
-      return String(value || "").split(/[\s,]+/).filter(Boolean).map(code => labels[code] || code).join("・");
+        DUPLICATE_CANDIDATE: "同じイベントの可能性", LOW_CONFIDENCE: "抽出内容の確認が必要",
+        LOW_EVENT_CONFIDENCE: "イベント告知か要確認", NON_EVENT_CANDIDATE: "イベント告知ではない可能性",
+        AI_SOURCE_CHANGED: "AI抽出後に原文が更新", FEE_TEXT_INCOMPLETE: "料金区分の記載が不完全",
+        URL_NOT_IN_SOURCE: "原文で確認できないURLは不採用", PDF_PRIMARY: "PDF原本を要確認"};
+      const label = code => labels[code] || (code.endsWith("_EVIDENCE_MISSING") ? "AI抽出の根拠が不足" :
+        /_EVIDENCE_(NOT_IN_SOURCE|MISMATCH)$/.test(code) ? "原文と一致しないAI抽出は不採用" :
+        code.endsWith("_INVALID") ? "形式が不正なAI抽出は不採用" : "原文の確認が必要");
+      return [...new Set(String(value || "").split(/[\s,]+/).filter(Boolean).map(label))].join("・");
     }
 
     function sourceMessageText(value) {
@@ -578,6 +594,34 @@
       [...form.elements].forEach(input => { if (input.name) input.value = event[input.name] || ""; });
       document.getElementById("editor-modal").hidden = false;
       renderPreview();
+      const details = document.getElementById("extraction-details");
+      details.replaceChildren(el("p", "panel-sub", "根拠を読み込み中…"));
+      google.script.run.withSuccessHandler(rows => {
+        if (state.activeEvent?.event_id === eventId) renderExtractionDetails(rows);
+      }).withFailureHandler(() => {
+        if (state.activeEvent?.event_id === eventId) details.replaceChildren(el("p", "panel-sub", "根拠を取得できませんでした。公式ページを確認してください。"));
+      }).getAdminExtractionDetails(eventId);
+    }
+
+    function renderExtractionDetails(rows) {
+      const labels = {title:"イベント名", event_start_at:"開催開始", event_end_at:"開催終了",
+        stream_start_at:"配信開始", stream_end_at:"配信終了", application_deadline_at:"申込締切",
+        organizer_name:"主催者", organizer_type:"主催区分", format:"開催形式", event_type:"イベント種別",
+        genres:"ジャンル", fee_text:"参加費", fee_category:"参加費区分", credits_text:"単位・ポイント",
+        audience_conditions:"参加条件", event_date_precision:"時刻の精度", primary_official_url:"公式URL",
+        application_url:"申込URL", is_event:"イベント判定"};
+      const cards = rows.map(row => {
+        const card = el("div", "extraction-item");
+        card.append(el("strong", "", labels[row.field_name] || "その他の項目"));
+        let value = row.value;
+        if (row.field_name === "is_event") value = value ? "イベントの可能性あり" : "イベントではない可能性（人が確認）";
+        if (row.field_name === "event_date_precision") value = value === "date" ? "日付のみ・時刻不明" : "時刻まで取得";
+        card.append(el("p", "", value == null ? "不明・不採用" : Array.isArray(value) ? value.join("、") : String(value)));
+        card.append(el("p", "panel-sub", (row.extractor === "ai" ? "AI / " + row.model : "ルール抽出") + " / 確信度 " + Math.round(row.confidence * 100) + "%"));
+        if (row.evidence) card.append(el("blockquote", "", row.evidence));
+        return card;
+      });
+      document.getElementById("extraction-details").replaceChildren(...(cards.length ? cards : [el("p", "panel-sub", "自動抽出の記録はありません。公式ページを確認してください。") ]));
     }
 
     function closeEditor(event) {
@@ -592,7 +636,7 @@
       const tags = value("genres").split(/\n|,/).map(item => item.trim()).filter(Boolean);
       document.getElementById("preview-tags").replaceChildren(badge(value("format") || "要確認", "active"), ...tags.slice(0, 3).map(tag => badge(tag)));
       document.getElementById("preview-title").textContent = value("title") || "イベント名";
-      document.getElementById("preview-date").textContent = shortDate(value("event_start_at")) || "要確認";
+      document.getElementById("preview-date").textContent = shortDate(value("event_start_at"), value("event_date_precision")) || "要確認";
       document.getElementById("preview-deadline").textContent = shortDate(value("application_deadline_at")) || "要確認";
       document.getElementById("preview-fee").textContent = value("fee_text") || value("fee_category") || "要確認";
       document.getElementById("preview-organizer").textContent = "主催：" + (value("organizer_name") || "要確認");
@@ -676,7 +720,7 @@
     function badgeCell(text) { const td = document.createElement("td"); td.append(badge(text, text === "公開" || text === "稼働中" || text === "確認済み" ? "published" : text === "確認待ち" || text === "要確認" || text === "あり" ? "warning" : "")); return td; }
     function badge(text, tone = "") { return el("span", "badge " + tone, text || "—"); }
     function formatDate(value) { if (!value) return "未取得"; const date = new Date(value); return isNaN(date) ? value : date.toLocaleString("ja-JP"); }
-    function shortDate(value) { if (!value) return "要確認"; const date = new Date(value); return isNaN(date) ? value : `${date.getFullYear()}年${date.getMonth()+1}月${date.getDate()}日 ${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`; }
+    function shortDate(value, precision) { if (!value) return "要確認"; const date = new Date(value); if (isNaN(date)) return value; const day = `${date.getFullYear()}年${date.getMonth()+1}月${date.getDate()}日`; return precision === "date" ? day + "（時刻不明）" : day + ` ${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`; }
     loadData();
   </script>
 </body>

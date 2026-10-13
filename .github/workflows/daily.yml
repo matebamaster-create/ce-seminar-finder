@@ -85,6 +85,26 @@ jobs:
           for summary in var/*/summary.md; do
             if [[ -f "$summary" ]]; then cat "$summary" >> "$GITHUB_STEP_SUMMARY"; fi
           done
+      - name: Refine public candidates with bounded AI (never auto-publish)
+        if: github.event_name == 'schedule' || inputs.source_ids != ''
+        continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [[ -z "$OPENAI_API_KEY" ]]; then
+            echo "AIは未接続です。通常収集と承認済み情報の公開を継続します。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python -m ce_seminar_finder.cli refine-candidates \
+            --input var/*/candidates.json --max-calls 5 \
+            --spreadsheet-id "$CE_SPREADSHEET_ID" \
+            --output var/ai-refined.json --summary var/ai-summary.json
+      - name: Add bounded AI summary
+        if: always()
+        run: |
+          if [[ -f var/ai-summary.json ]]; then
+            python -c 'import json,os; s=json.load(open("var/ai-summary.json")); text="\n## AI補足（自動公開なし）\n候補反映: {}件 / API呼び出し: {}回 / 入力: {} tokens / 出力: {} tokens / エラー: {}件\n".format(s["refined"],s["requests"],s["input_tokens"],s["output_tokens"],len(s["errors"])); open(os.environ["GITHUB_STEP_SUMMARY"],"a").write(text)'
+          fi
       - name: Archive and export approved events
         id: public-data
         run: |
@@ -132,6 +152,7 @@ jobs:
           path: |
             var/*/summary.json
             var/*/summary.md
+            var/ai-summary.json
           if-no-files-found: warn
           retention-days: 14
 

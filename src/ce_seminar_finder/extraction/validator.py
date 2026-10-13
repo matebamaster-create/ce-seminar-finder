@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
+import math
+import unicodedata
 from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
@@ -33,6 +36,11 @@ KNOWN_FIELDS = {
     "credits_text",
     "official_url",
     "application_url",
+    "event_date_precision",
+    "event_start_text",
+    "event_end_text",
+    "stream_start_text",
+    "stream_end_text",
 }
 DATE_FIELDS = {
     "event_start",
@@ -60,9 +68,10 @@ def validate_extraction(
     model: str,
     prompt_version: str,
     cache_hit: bool = False,
+    source_text: str | None = None,
 ) -> ExtractionResult:
     reasons = _string_list(raw.get("review_reasons"))
-    allowed = {_normalize_url(value) for value in allowed_urls}
+    allowed = {normalized for value in allowed_urls if (normalized := _normalize_url(value))}
     raw_fields = raw.get("fields", {})
     if not isinstance(raw_fields, Mapping):
         raw_fields = {}
@@ -76,10 +85,33 @@ def validate_extraction(
         confidence = _confidence(item.get("confidence"))
         evidence = _evidence(item.get("evidence"))
 
+        if value is not None and source_text is not None and name not in URL_FIELDS and not evidence:
+            value, confidence = None, 0.0
+            reasons.append(f"{name.upper()}_EVIDENCE_MISSING")
         if value is not None and name in EVIDENCE_REQUIRED and not evidence:
             value = None
             confidence = 0.0
             reasons.append(f"{name.upper()}_EVIDENCE_MISSING")
+        if value is not None and evidence and source_text is not None:
+            if _ground_text(evidence) not in _ground_text(source_text):
+                value, confidence = None, 0.0
+                reasons.append(f"{name.upper()}_EVIDENCE_NOT_IN_SOURCE")
+            elif name in DATE_FIELDS and _valid_datetime(value) and not _date_supported(value, evidence, name):
+                value, confidence = None, 0.0
+                reasons.append(f"{name.upper()}_EVIDENCE_MISMATCH")
+            elif name in {"fee_text", "credits_text"} and not _numbers_supported(value, evidence):
+                value, confidence = None, 0.0
+                reasons.append(f"{name.upper()}_EVIDENCE_MISMATCH")
+            elif name in {"title", "organizer", "audience_conditions", "credits_text",
+                          "event_start_text", "event_end_text", "stream_start_text", "stream_end_text"} and _ground_text(str(value)) not in _ground_text(evidence):
+                value, confidence = None, 0.0
+                reasons.append(f"{name.upper()}_EVIDENCE_MISMATCH")
+            elif name == "fee_text" and re.search(r"[:：]\s*(?:[、,;；]|$)", str(value)):
+                value, confidence = None, 0.0
+                reasons.append("FEE_TEXT_INCOMPLETE")
+            elif name == "fee_category" and value == "無料" and not _free_supported(evidence):
+                value, confidence = None, 0.0
+                reasons.append("FEE_CATEGORY_EVIDENCE_MISMATCH")
         if value is not None and name in DATE_FIELDS and not _valid_datetime(value):
             value = None
             confidence = 0.0
@@ -95,6 +127,9 @@ def validate_extraction(
                 reasons.append("GENRES_INVALID")
             else:
                 value = [entry for entry in value if entry in GENRES]
+        if name == "event_date_precision" and value not in {None, "date", "datetime"}:
+            value, confidence = None, 0.0
+            reasons.append("DATE_PRECISION_INVALID")
         if value is not None and name in URL_FIELDS:
             normalized = _normalize_url(str(value))
             if normalized not in allowed:
@@ -111,7 +146,7 @@ def validate_extraction(
         )
 
     return ExtractionResult(
-        is_event=bool(raw.get("is_event", False)),
+        is_event=raw.get("is_event") is True,
         event_confidence=_confidence(raw.get("event_confidence")),
         fields=fields,
         review_reasons=tuple(dict.fromkeys(reasons)),
@@ -120,6 +155,41 @@ def validate_extraction(
         prompt_version=prompt_version,
         cache_hit=cache_hit,
     )
+
+
+def _ground_text(value: str) -> str:
+    return "".join(unicodedata.normalize("NFKC", value).split())
+
+
+def _date_supported(value: str, evidence: str, name: str) -> bool:
+    from .rules import DATE_PATTERN, JST, _normalized
+    date = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(JST)
+    normalized = _normalized(evidence)
+    for match in DATE_PATTERN.finditer(normalized):
+        if (int(match["year"]), int(match["month"]), int(match["day"])) != (date.year, date.month, date.day):
+            continue
+        if match["hour"] is not None:
+            if int(match["hour"]) != date.hour or int(match["minute"] or 0) != date.minute:
+                # An end time may follow the first date's start time in a range.
+                if name not in {"event_end", "stream_end"} or not re.search(
+                    rf"(?:~|〜|～|-|−|－|–|—|から|to)\s*{date.hour:02d}[:：時]{date.minute:02d}", normalized):
+                    continue
+        elif (date.hour, date.minute, date.second) not in {(0, 0, 0), (23, 59, 59)}:
+            continue
+        return True
+    return False
+
+
+def _free_supported(evidence: str) -> bool:
+    text = _ground_text(evidence).replace(",", "")
+    matches = re.findall(r"(?:[¥￥](\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)円)", text)
+    amounts = [float(a or b) for a, b in matches]
+    return ("無料" in text or any(value == 0 for value in amounts)) and not any(value > 0 for value in amounts)
+
+
+def _numbers_supported(value: Any, evidence: str) -> bool:
+    numbers = lambda text: set(re.findall(r"\d+(?:\.\d+)?", _ground_text(str(text)).replace(",", "")))
+    return numbers(value).issubset(numbers(evidence))
 
 
 def _valid_datetime(value: Any) -> bool:
@@ -133,11 +203,14 @@ def _valid_datetime(value: Any) -> bool:
 
 
 def _normalize_url(value: str) -> str:
-    parsed = urlsplit(value.strip())
+    try:
+        parsed = urlsplit(value.strip())
+        port = parsed.port
+    except (ValueError, AttributeError):
+        return ""
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ""
     host = (parsed.hostname or "").lower()
-    port = parsed.port
     netloc = host
     if port and not (
         (parsed.scheme == "http" and port == 80)
@@ -149,7 +222,8 @@ def _normalize_url(value: str) -> str:
 
 def _confidence(value: Any) -> float:
     try:
-        return min(1.0, max(0.0, float(value)))
+        number = float(value)
+        return min(1.0, max(0.0, number)) if math.isfinite(number) else 0.0
     except (TypeError, ValueError):
         return 0.0
 

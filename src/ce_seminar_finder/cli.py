@@ -24,6 +24,11 @@ from .collection.renderer import PublicPageRenderer
 from .automation.daily import run_daily_collection, write_daily_outputs
 from .automation.lock import RunAlreadyActive
 from .extraction.pdf import extract_pdf
+from .extraction.cache import JsonExtractionCache
+from .extraction.openai_provider import DEFAULT_MODEL, OpenAIProvider, OpenAIExtractionError, load_api_key
+from .extraction.prompt import PROMPT_VERSION
+from .extraction.refinement import candidate_payload, read_saved_candidates, read_processed_keys, refine_candidates
+from .extraction.service import ExtractionService
 from .sheets.initializer import build_plan, initialize_spreadsheet, load_google_service
 from .sheets.reader import (
     archive_expired_sheet_events,
@@ -149,6 +154,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     import_events.add_argument("--spreadsheet-id", required=True)
     import_events.add_argument("--input", type=Path, required=True)
+
+    refine = subparsers.add_parser("refine-candidates", help="公式候補をAIで補足し、確認待ちへ反映します（自動公開なし）")
+    refine.add_argument("--input", type=Path, nargs="+", required=True)
+    refine.add_argument("--output", type=Path, required=True)
+    refine.add_argument("--summary", type=Path)
+    refine.add_argument("--max-calls", type=int, choices=range(1, 6), default=5)
+    refine.add_argument("--model", default=DEFAULT_MODEL)
+    refine.add_argument("--env-file", type=Path)
+    refine.add_argument("--cache", type=Path, default=Path("var/ai-cache.json"))
+    refine.add_argument("--spreadsheet-id")
     return parser
 
 
@@ -163,6 +178,29 @@ def main(argv: list[str] | None = None) -> int:
         plan = initialize_spreadsheet(service, args.spreadsheet_id)
         print(json.dumps(plan.as_dict(), ensure_ascii=False, indent=2))
         return 0
+
+    if args.command == "refine-candidates":
+        try:
+            provider = OpenAIProvider(load_api_key(args.env_file), model=args.model, max_requests=args.max_calls)
+        except OpenAIExtractionError as error:
+            print(json.dumps({"status": "failed", "code": error.code}))
+            return 1
+        candidates = read_saved_candidates(args.input)
+        google = load_google_service() if args.spreadsheet_id else None
+        processed = read_processed_keys(google, args.spreadsheet_id) if google else set()
+        extractor = ExtractionService(provider, prompt_version=PROMPT_VERSION, cache=JsonExtractionCache(args.cache))
+        refined, summary = refine_candidates(candidates, extractor, processed_keys=processed)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps([candidate_payload(c) for c in refined], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if google:
+            SheetCollectionRepository(google, args.spreadsheet_id).append_candidates(refined)
+        summary.update({"model": args.model, "prompt_version": PROMPT_VERSION,
+            "sheet_updated": bool(google and refined), "auto_published": False})
+        if args.summary:
+            args.summary.parent.mkdir(parents=True, exist_ok=True)
+            args.summary.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(summary, ensure_ascii=False))
+        return 1 if summary["errors"] else 0
 
     if args.command == "build-public":
         generated_at = parse_datetime(args.generated_at) if args.generated_at else None

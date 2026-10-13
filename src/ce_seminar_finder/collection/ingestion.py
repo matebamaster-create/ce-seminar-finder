@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-from ce_seminar_finder.extraction.rules import extract_rule_values
+from ce_seminar_finder.extraction.refinement import candidate_content_hash
 from ce_seminar_finder.collection.sources import source_config
 from ce_seminar_finder.sheets.schema import (
     AUTO_FIELD_HEADERS, EVENTS_HEADERS, EVENT_SOURCES_HEADERS, REVIEW_QUEUE_HEADERS, DUPLICATE_HEADERS,
@@ -111,6 +112,29 @@ class CandidateIngestor:
                 by_id[event_id] = event
                 by_url.setdefault(url, event)
             event_id = event["event_id"]
+            human_owned = bool(event.get("last_admin_updated_at")) or event.get("review_status") == "確認済み" or event.get("publication_status") != "確認待ち"
+            classification_id = stable_id("av_", event_id, "is_event", candidate.source_id)
+            classification = autos_by_id.get(classification_id, {})
+            if candidate.ai_result:
+                result = candidate.ai_result
+                classification = dict(classification)
+                classification.update({"value_id": classification_id, "event_id": event_id,
+                    "field_name": "is_event", "extracted_value_json": json.dumps(result.is_event),
+                    "normalized_value_json": json.dumps(result.is_event), "confidence": result.event_confidence,
+                    "extractor": "ai", "provider": result.provider, "model": result.model,
+                    "prompt_version": result.prompt_version, "source_document_id": event_source_id,
+                    "evidence_text": candidate.title_hint[:300], "evidence_location": json.dumps({
+                        "cache_key": candidate.ai_cache_key, "content_hash": candidate_content_hash(candidate),
+                        "review_reasons": list(result.review_reasons)}, ensure_ascii=False),
+                    "extracted_at": now, "accepted": False})
+                save("AutoFieldValues", classification)
+                autos_by_id[classification_id] = classification
+            try:
+                ai_location = json.loads(classification.get("evidence_location") or "{}")
+            except (ValueError, TypeError):
+                ai_location = {}
+            ai_source_changed = bool(ai_location.get("content_hash") and
+                                     ai_location["content_hash"] != candidate_content_hash(candidate))
             proposed = {}
             for name, field in fields.items():
                 if field.value is None:
@@ -120,21 +144,35 @@ class CandidateIngestor:
                     continue
                 value_id = stable_id("av_", event_id, target, candidate.source_id)
                 auto = dict(autos_by_id.get(value_id, {}))
+                is_ai = bool(candidate.ai_result and candidate.ai_result.is_event and
+                             candidate.ai_result.fields.get(name) == field)
+                # A later rule-only collection must not erase a grounded AI
+                # proposal. Changed source text is sent back for review/refinement.
+                if not is_ai and auto.get("extractor") == "ai":
+                    continue
                 auto.update({"value_id": value_id, "event_id": event_id, "field_name": target,
                     "extracted_value_json": json.dumps(field.value, ensure_ascii=False),
                     "normalized_value_json": json.dumps(field.value, ensure_ascii=False),
-                    "confidence": field.confidence, "extractor": "rule", "evidence_text": field.evidence or "",
-                    "source_document_id": event_source_id, "extracted_at": now, "accepted": field.confidence >= 0.85})
+                    "confidence": field.confidence, "extractor": "ai" if is_ai else "rule",
+                    "provider": candidate.ai_result.provider if is_ai else "",
+                    "model": candidate.ai_result.model if is_ai else "",
+                    "prompt_version": candidate.ai_result.prompt_version if is_ai else "",
+                    "evidence_text": field.evidence or "", "evidence_location": json.dumps({
+                        "cache_key": candidate.ai_cache_key, "content_hash": candidate_content_hash(candidate)},
+                        ensure_ascii=False) if is_ai else "",
+                    "source_document_id": event_source_id, "extracted_at": now,
+                    "accepted": field.confidence >= 0.85 and not human_owned})
                 save("AutoFieldValues", auto)
                 autos_by_id[value_id] = auto
                 if field.confidence >= 0.85:
                     proposed[target] = field.value
             # Existing approved/edited rows are display snapshots controlled by
             # administrators. Automatic values remain available for comparison.
-            human_owned = bool(event.get("last_admin_updated_at")) or event.get("review_status") == "確認済み" or event.get("publication_status") != "確認待ち"
             changed = [name for name, value in proposed.items() if event.get(name) not in ("", None, _cell(value), value)]
             if not human_owned:
                 event.update(proposed)
+                if re.search(r"[:：]\s*(?:[、,;；]|$)", str(event.get("fee_text") or "")):
+                    event["fee_text"] = ""
                 event.setdefault("event_type", "その他")
                 if candidate.pdf_urls:
                     event["primary_pdf_url"] = candidate.pdf_urls[0]
@@ -157,6 +195,14 @@ class CandidateIngestor:
             sources_by_id[event_source_id] = source_row
 
             reasons = []
+            if classification.get("extractor") == "ai":
+                if classification.get("normalized_value_json") == "false":
+                    reasons.append("NON_EVENT_CANDIDATE")
+                if float(classification.get("confidence") or 0) < .85:
+                    reasons.append("LOW_EVENT_CONFIDENCE")
+                reasons.extend(ai_location.get("review_reasons", []))
+            if ai_source_changed:
+                reasons.append("AI_SOURCE_CHANGED")
             if not event.get("event_start_at") and not event.get("stream_start_at"):
                 reasons.append("DATE_UNKNOWN")
             if not event.get("organizer_name"):
@@ -202,10 +248,11 @@ class CandidateIngestor:
                 event["review_reason_display"] = _review_reason_display(reasons) or "自動取得情報を確認してください"
                 event["review_label"] = "あり"
                 save("Events", event)
-            if is_new or (not human_owned) or (human_owned and changed and event.get("publication_status") == "公開"):
+            if is_new or (not human_owned) or (human_owned and event.get("publication_status") == "公開" and
+                (changed or ai_source_changed or candidate.ai_result and reasons)):
                 review = dict(reviews_by_id.get(event_id, {}))
                 review.update({"review_id": review.get("review_id") or stable_id("rev_", event_id, now), "event_id": event_id,
-                    "priority": "高" if "HIGH_IMPACT_FIELD_CHANGED" in reasons else "通常", "reason_codes": "\n".join(dict.fromkeys(reasons or ["ADMIN_REVIEW_REQUIRED"])),
+                    "priority": "高" if "HIGH_IMPACT_FIELD_CHANGED" in reasons or "AI_SOURCE_CHANGED" in reasons else "通常", "reason_codes": "\n".join(dict.fromkeys(reasons or ["ADMIN_REVIEW_REQUIRED"])),
                     "suggested_action": "修正" if human_owned else "要確認付き公開",
                     "source_excerpt": candidate.block_text[:500] or candidate.title_hint, "source_urls": candidate.detail_url,
                     "uncertain_fields": "\n".join(changed), "decision": "未判断", "automation_choice": "次回も確認"})

@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Mapping
 
-from ce_seminar_finder.extraction.models import ExtractedField
+from ce_seminar_finder.extraction.models import ExtractedField, ExtractionResult
 
 
 class FetchOutcome(StrEnum):
@@ -92,6 +92,8 @@ class EventCandidate:
     block_text: str = ""
     extracted_fields: Mapping[str, ExtractedField] = field(default_factory=dict)
     confidence_hint: float = 0.5
+    ai_result: ExtractionResult | None = None
+    ai_cache_key: str = ""
 
 
 @dataclass(frozen=True, slots=True)

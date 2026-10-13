@@ -33,10 +33,12 @@ class ExtractionRequest:
     rule_values: Mapping[str, ExtractedField] = field(default_factory=dict)
     pdf_chunks: tuple[str, ...] = ()
     taxonomy: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    title_hint: str = ""
 
     def cache_payload(self) -> dict[str, Any]:
         return {
             "source_id": self.source_id,
+            "title_hint": self.title_hint,
             "source_url": self.source_url,
             "candidate_text": self.candidate_text,
             "allowed_urls": list(self.allowed_urls),

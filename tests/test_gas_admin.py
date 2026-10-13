@@ -12,6 +12,30 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class GasAdminTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for JavaScript behavior checks")
+    def test_extraction_details_are_admin_only_and_filter_other_events_and_columns(self):
+        script = r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const app = vm.createContext({});
+vm.runInContext(fs.readFileSync("gas/Code.gs", "utf8"), app);
+app.requireAdmin_ = () => {throw Error("denied")};
+assert.throws(() => app.getAdminExtractionDetails("one"), /denied/);
+app.requireAdmin_ = () => "owner";
+app.adminSpreadsheet_ = () => ({}); app.requiredSheet_ = (s,n) => n; app.findRow_ = () => 2;
+app.sheetObjects_ = () => [
+  {event_id:"one",field_name:"fee_text",normalized_value_json:'"500円"',confidence:".9",extractor:"ai",model:"test",evidence_text:"参加費500円",secret:"must-not-return"},
+  {event_id:"other",field_name:"fee_text",normalized_value_json:'"private-other"'},
+  {event_id:"one",field_name:"unknown",normalized_value_json:'"private-field"'}
+];
+const result = app.getAdminExtractionDetails("one");
+assert.equal(result.length, 1); assert.equal(result[0].value, "500円"); assert.equal(result[0].confidence, .9);
+assert.doesNotMatch(JSON.stringify(result), /must-not-return|private-other|private-field/);
+app.findRow_ = () => null; assert.throws(() => app.getAdminExtractionDetails("missing"), /見つかりません/);
+app.validateAdminValue_("event_date_precision", "date");
+assert.throws(() => app.validateAdminValue_("event_date_precision", "guess"), /不正/);
+'''
+        subprocess.run([shutil.which("node"), "-e", script], cwd=ROOT, check=True, capture_output=True, text=True)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for JavaScript behavior checks")
     def test_secret_rotation_requires_owner_and_dispatch_without_disclosing_secret(self) -> None:
         script = r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
@@ -104,6 +128,8 @@ const ui = vm.createContext({document: {querySelectorAll: () => [], getElementBy
 const html = fs.readFileSync("gas/Index.html", "utf8");
 vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/\n    loadData\(\);/, ""), ui);
 assert.equal(ui.reviewReasonText("DATE_UNKNOWN\nFEE_UNKNOWN"), "開催日が不明・参加費が不明");
+assert.match(ui.reviewReasonText("FEE_TEXT_EVIDENCE_MISMATCH\nAI_SOURCE_CHANGED"), /原文と一致しないAI抽出は不採用・AI抽出後に原文が更新/);
+assert.doesNotMatch(ui.shortDate("2026-11-01T00:00:00+09:00", "date"), /00:00/);
 assert.equal(ui.sourceMessageText("0件 / PUBLIC_SEMINAR_LIST_EMPTY"), "0件 / 公開セミナー欄は0件");
 const now = Date.parse("2026-10-13T00:00:00+09:00");
 assert.equal(ui.isUpcomingEvent({event_start_at: "2026-10-12T10:00:00+09:00"}, now), false);

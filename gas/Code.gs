@@ -480,6 +480,28 @@ function getAdminDashboard() {
   };
 }
 
+function getAdminExtractionDetails(eventId) {
+  requireAdmin_();
+  const spreadsheet = adminSpreadsheet_();
+  if (!eventId || !findRow_(requiredSheet_(spreadsheet, "Events"), "event_id", eventId)) {
+    throw new Error("対象イベントが見つかりません。");
+  }
+  const allowed = adminEditableFields_().concat(["is_event", "event_date_precision"]);
+  return sheetObjects_(requiredSheet_(spreadsheet, "AutoFieldValues"))
+    .filter(function (row) { return row.event_id === eventId && allowed.indexOf(row.field_name) >= 0; })
+    .slice(0, 100).map(function (row) {
+      let value;
+      try { value = JSON.parse(row.normalized_value_json || "null"); }
+      catch (error) { value = null; }
+      return {field_name: row.field_name, value: value,
+        confidence: Math.max(0, Math.min(1, Number(row.confidence) || 0)),
+        extractor: row.extractor === "ai" ? "ai" : "rule",
+        model: String(row.model || "").slice(0, 100),
+        evidence: String(row.evidence_text || "").slice(0, 300),
+        extracted_at: row.extracted_at || ""};
+    });
+}
+
 function saveAdminEvent(payload) {
   const actor = requireAdmin_();
   if (!payload || !payload.event_id || !payload.values) {
@@ -851,6 +873,7 @@ function adminEvent_(event) {
     "credits_text",
     "event_start_at",
     "event_end_at",
+    "event_date_precision",
     "stream_start_at",
     "stream_end_at",
     "stream_period_text",
@@ -896,6 +919,7 @@ function adminEditableFields_() {
     "credits_text",
     "event_start_at",
     "event_end_at",
+    "event_date_precision",
     "stream_start_at",
     "stream_end_at",
     "stream_period_text",
@@ -952,6 +976,7 @@ function validateAdminValue_(field, value) {
     ],
     format: ["Web", "オンデマンド", "ハイブリッド", "現地開催", "要確認"],
     fee_category: ["無料", "有料", "要確認"],
+    event_date_precision: ["", "date", "datetime"],
   };
   if (allowed[field] && allowed[field].indexOf(value) < 0) {
     throw new Error(field + "の選択値が不正です。");

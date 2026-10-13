@@ -92,7 +92,8 @@ def extract_rule_values(text: str, *, allowed_urls: Iterable[str] = (), title_hi
     amounts = list(re.finditer(r"[\d,]+\s*円|無料", fee_text))
     if amounts:
         fee_text = fee_text[:amounts[-1].end()].strip()
-        put("fee_text", " ".join(fee_text.split()), fee_text, 0.92)
+        if not re.search(r"[:：]\s*(?:[、,;；]|$)", fee_text):
+            put("fee_text", " ".join(fee_text.split()), fee_text, 0.92)
         paid = any(int(re.sub(r"\D", "", m[0]) or "0") > 0 for m in amounts if "円" in m[0])
         put("fee_category", "有料" if paid else "無料", fee_text, 0.92)
 

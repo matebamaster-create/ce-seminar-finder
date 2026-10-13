@@ -28,6 +28,7 @@ class ExtractionService:
             prompt_version=self.prompt_version,
         )
         cached = self.cache.get(key) if self.cache else None
+        source_text = request.title_hint + "\n" + request.candidate_text + "\n" + "\n".join(request.pdf_chunks)
         if cached is not None:
             return validate_extraction(
                 cached,
@@ -36,6 +37,7 @@ class ExtractionService:
                 model=self.provider.model,
                 prompt_version=self.prompt_version,
                 cache_hit=True,
+                source_text=source_text,
             )
 
         raw = self.provider.extract_event(request)
@@ -45,6 +47,7 @@ class ExtractionService:
             provider=self.provider.name,
             model=self.provider.model,
             prompt_version=self.prompt_version,
+            source_text=source_text,
         )
         if self.cache:
             self.cache.put(key, result.as_dict())

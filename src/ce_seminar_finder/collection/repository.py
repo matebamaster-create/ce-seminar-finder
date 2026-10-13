@@ -279,8 +279,22 @@ def _review_reason_display(reasons: list[str]) -> str:
         "TEXT_QUALITY_LOW": "原文の読み取り結果を確認してください",
         "HIGH_IMPACT_FIELD_CHANGED": "重要項目の変更を確認してください",
         "SOURCE_GAP": "情報源の不足を確認してください",
+        "NON_EVENT_CANDIDATE": "イベント告知かどうか原文を確認してください",
+        "AI_SOURCE_CHANGED": "AI抽出後に原文が変わったため再確認してください",
+        "FEE_TEXT_INCOMPLETE": "料金区分の記載が不完全です。原文を確認してください",
+        "URL_NOT_IN_SOURCE": "原文で確認できないURLを採用しませんでした",
     }
-    return "\n".join(labels.get(reason, reason) for reason in reasons)
+    def label(reason):
+        if reason in labels:
+            return labels[reason]
+        if reason.endswith("_EVIDENCE_MISSING"):
+            return "AI抽出の根拠が不足している項目があります"
+        if reason.endswith(("_EVIDENCE_NOT_IN_SOURCE", "_EVIDENCE_MISMATCH")):
+            return "AI抽出が原文と一致しない項目を採用しませんでした"
+        if reason.endswith("_INVALID"):
+            return "AI抽出の形式が不正な項目を採用しませんでした"
+        return "原文の確認が必要です"  # Model-authored codes must not become UI text.
+    return "\n".join(dict.fromkeys(label(reason) for reason in reasons))
 
 
 class CompositeCollectionRepository:
