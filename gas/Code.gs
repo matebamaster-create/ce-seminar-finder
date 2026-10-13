@@ -870,7 +870,7 @@ function rolloutRegions_() {
     },
     {
       name: "東海・北陸",
-      status: "次に対応",
+      status: "実装済み・検証中",
       prefectures: "岐阜・静岡・愛知・三重・富山・石川・福井",
     },
     {
