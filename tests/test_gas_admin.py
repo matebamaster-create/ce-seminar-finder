@@ -35,6 +35,7 @@ const ui = vm.createContext({document: {querySelectorAll: () => [], getElementBy
 const html = fs.readFileSync("gas/Index.html", "utf8");
 vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/\n    loadData\(\);/, ""), ui);
 assert.equal(ui.reviewReasonText("DATE_UNKNOWN\nFEE_UNKNOWN"), "開催日が不明・参加費が不明");
+assert.equal(ui.sourceMessageText("0件 / PUBLIC_SEMINAR_LIST_EMPTY"), "0件 / 公開セミナー欄は0件");
 const now = Date.parse("2026-10-13T00:00:00+09:00");
 assert.equal(ui.isUpcomingEvent({event_start_at: "2026-10-12T10:00:00+09:00"}, now), false);
 assert.equal(ui.isUpcomingEvent({stream_start_at: "2026-09-01T00:00:00+09:00", stream_end_at: "2026-11-01T00:00:00+09:00"}, now), true);

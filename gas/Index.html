@@ -472,6 +472,13 @@
       return String(value || "").split(/[\s,]+/).filter(Boolean).map(code => labels[code] || code).join("・");
     }
 
+    function sourceMessageText(value) {
+      const labels = {ROBOTS_NOT_PUBLISHED: "自動取得ルールの掲載なし", ROBOTS_UNAVAILABLE: "自動取得ルールを取得できず",
+        PUBLIC_BROWSER_RENDERED: "公開ページをブラウザで取得", PUBLIC_SEMINAR_LIST_EMPTY: "公開セミナー欄は0件",
+        CLIENT_RENDER_REQUIRED: "ブラウザでの取得が必要", REQUEST_BUDGET_EXCEEDED: "今回の取得上限に到達"};
+      return String(value || "").replace(/\b[A-Z][A-Z_]+\b/g, code => labels[code] || code);
+    }
+
     function renderEvents() {
       if (!state.data) return;
       const query = document.getElementById("event-search").value.trim().toLowerCase();
@@ -518,11 +525,13 @@
         const tr = document.createElement("tr");
         tr.append(textCell(source.prefecture), titleCell({ title: source.organization_name, organizer_name: source.base_url }));
         tr.append(badgeCell(source.enabled ? "有効" : "停止中"));
-        tr.append(textCell((source.last_result || "未検証") + (source.last_message ? " / " + source.last_message : "")));
+        tr.append(textCell((source.last_result || "未検証") + (source.last_message ? " / " + sourceMessageText(source.last_message) : "")));
         tr.append(textCell(shortDate(source.last_success_at)));
         tr.append(badgeCell(source.consecutive_failures ? source.consecutive_failures + "回" : "なし"));
         const action = document.createElement("td");
         const button = el("button", "button secondary small", "今すぐ取得");
+        button.disabled = !state.data.connections.github_actions;
+        button.title = state.data.connections.github_message || "";
         button.addEventListener("click", () => requestSource(source.source_id));
         const toggle = el("button", "button secondary small", source.enabled ? "停止する" : "日次取得を有効化");
         toggle.addEventListener("click", () => {
