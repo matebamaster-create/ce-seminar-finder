@@ -21,6 +21,40 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PublisherTest(unittest.TestCase):
+    def test_incomplete_archived_record_does_not_block_approved_events(self):
+        approved = load_event_records(ROOT / "fixtures/sample-events.json")
+        incomplete = EventRecord.from_dict({"event_id": "evt_incomplete_archive", "publication_status": "アーカイブ",
+            "fixed_values": {"title": "主催不明の過去候補", "event_start_at": "2020-01-01T10:00:00+09:00"}})
+        payload = build_public_payload([*approved, incomplete], include_archived=True)
+        self.assertEqual(1, payload["event_count"])
+        self.assertEqual(1, payload["archived_omitted_count"])
+        self.assertNotIn("evt_incomplete_archive", json.dumps(payload))
+
+    def test_unapproved_past_candidate_is_private_even_with_required_fields(self):
+        record = EventRecord.from_dict({"event_id": "evt_private_past", "publication_status": "アーカイブ",
+            "fixed_values": {"title": "過去候補", "organizer_name": "未確認の主催者", "format": "Web",
+                "event_start_at": "2020-01-01T10:00:00+09:00", "primary_official_url": "https://example.test/event",
+                "review_reason_codes": "PAST_EVENT_CANDIDATE", "fee_verified": False}})
+        payload = build_public_payload([record], include_archived=True)
+        self.assertEqual([], payload["events"])
+        self.assertEqual(1, payload["archived_omitted_count"])
+
+    def test_previously_approved_expired_record_remains_in_public_archive(self):
+        record = EventRecord.from_dict({"event_id": "evt_approved_past", "publication_status": "アーカイブ",
+            "fixed_values": {"title": "確認済みの過去イベント", "organizer_name": "主催者", "format": "Web",
+                "event_start_at": "2020-01-01T10:00:00+09:00", "primary_official_url": "https://example.test/event",
+                "review_reason_codes": "PAST_EVENT_CANDIDATE", "fee_verified": True}})
+        payload = build_public_payload([record], include_archived=True)
+        self.assertTrue(payload["events"][0]["archived"])
+        self.assertNotIn("fee_verified", payload["events"][0])
+        self.assertNotIn("review_reason_codes", payload["events"][0])
+
+    def test_active_approved_record_validation_is_not_weakened(self):
+        record = EventRecord.from_dict({"event_id": "evt_invalid_active", "publication_status": "公開",
+            "fixed_values": {"title": "主催不明の公開行", "event_start_at": "2026-11-01T10:00:00+09:00"}})
+        with self.assertRaises(PublicationError):
+            build_public_payload([record], include_archived=True)
+
     def test_sample_only_publishes_canonical_approved_event(self) -> None:
         records = load_event_records(ROOT / "fixtures/sample-events.json")
         payload = build_public_payload(

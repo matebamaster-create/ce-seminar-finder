@@ -260,9 +260,10 @@
         </section>
         <section class="view" id="view-reviews">
           <div class="panel" style="margin-top:0">
-            <div class="panel-head"><div><h2>人の確認が必要な項目</h2><p class="panel-sub">原文の食い違い・読み取り不良・曖昧な重複など、自動で解消できない項目だけを残します。</p></div></div>
+            <div class="panel-head"><div><h2>人の確認が必要な項目</h2><p class="panel-sub">原文の矛盾・金額や日時の判読困難・曖昧な重複などを確認します。原文不足や一覧の分割は下の「収集側対応待ち」へ分けます。</p></div></div>
             <div class="review-list" id="reviews-list"></div>
           </div>
+          <div class="panel"><div class="panel-head"><div><h2>収集側対応待ち</h2><p class="panel-sub">原文の復旧・取得方法の修正が必要です。人が公開可否を一件ずつ判断する作業とは分け、未確認のまま公開しません。</p></div></div><div class="review-list" id="technical-list"></div></div>
         </section>
         <section class="view" id="view-sources">
           <div class="panel" style="margin-top:0">
@@ -430,6 +431,7 @@
         ["公開中", state.data.stats.published],
         ["未公開候補", state.data.stats.pending],
         ["自動処理待ち", state.data.stats.processing || 0],
+        ["収集側対応待ち", state.data.stats.technical || 0],
         ["人の確認が必要", state.data.automatic_review?.configured ? state.data.stats.review : "判定中"],
         ["取得エラー", state.data.stats.source_errors],
       ];
@@ -480,7 +482,7 @@
             textCell(shortDate(event.event_start_at || event.stream_start_at, event.event_date_precision)),
             textCell(event.source_prefecture || "—"),
             badgeCell(event.publication_status),
-            badgeCell(String(event.review_reason_codes || "").includes("AUTO_PROCESSING_PENDING") ? "自動処理待ち" : event.review_label === "あり" ? "要確認" : event.auto_publish_eligible ? "自動確認済み" : "確認済み"),
+            badgeCell(String(event.review_reason_codes || "").includes("AUTO_SOURCE_") ? "収集側対応待ち" : String(event.review_reason_codes || "").includes("AUTO_PROCESSING_PENDING") ? "自動処理待ち" : event.review_label === "あり" ? "要確認" : event.auto_publish_eligible ? "自動確認済み" : "確認済み"),
           ]
         : [
             titleCell(event),
@@ -537,7 +539,7 @@
         PAST_EVENT_CANDIDATE: "終了済みの開催情報（公開前に要確認）"};
       const automaticFields = {TITLE: "イベント名", ORGANIZER_NAME: "主催者", FORMAT: "開催形式", FEE_TEXT: "参加費",
         EVENT_START_AT: "開催日時", STREAM_START_AT: "配信開始", STREAM_END_AT: "配信終了"};
-      Object.assign(labels, {AUTO_PROCESSING_PENDING: "自動処理待ち", SOURCE_FIELD_CONFLICT: "掲載元どうしで日時・料金などが不一致",
+      Object.assign(labels, {AUTO_PROCESSING_PENDING: "自動処理待ち", AUTO_SOURCE_RECOVERY_PENDING: "収集側対応待ち：公式原文の復旧", AUTO_SOURCE_INTEGRITY_PENDING: "収集側対応待ち：保存原文の整合性復旧", AUTO_SOURCE_SPLIT_PENDING: "収集側対応待ち：一覧を個別イベントへ分割", SOURCE_FIELD_CONFLICT: "掲載元どうしで日時・料金などが不一致",
         SOURCE_TEXT_UNAVAILABLE: "公式本文を取得できず", SOURCE_SNAPSHOT_INVALID: "保存原文の整合性を要確認",
         EVENT_CLASSIFICATION_CONFLICT: "イベント告知か判断が分かれる", OFFICIAL_URL_UNVERIFIED: "公式URLの根拠を要確認",
         DATE_CONFLICT: "開催日時・終了日時の根拠が不一致", DATE_OUTSIDE_NORMAL_RANGE: "開催年の確認が必要"});
@@ -574,6 +576,13 @@
         : "一括処理の終了後、人の確認が必要なものを自動で再判定します。";
       document.getElementById("reviews-list").replaceChildren(...(reviewCards.length ? reviewCards : [el("p", "empty", emptyText)]));
       document.getElementById("dashboard-reviews").replaceChildren(...(dashboardCards.length ? dashboardCards : [el("p", "empty", emptyText)]));
+      const technical = (state.data.technical_reviews || []).map(review => {
+        const card = el("article", "review-card");
+        const body = el("div", ""); body.append(el("h3", "", review.event_title), el("p", "", reviewReasonText(review.reason_codes)));
+        const edit = el("button", "button secondary small", "原文・状況を見る"); edit.addEventListener("click", () => openEditor(review.event_id));
+        card.append(body, edit); return card;
+      });
+      document.getElementById("technical-list").replaceChildren(...(technical.length ? technical : [el("p", "empty", "収集側対応待ちの項目はありません。") ]));
     }
 
     function reviewCard(review) {

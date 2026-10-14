@@ -27,7 +27,10 @@ LABEL_PATTERN = re.compile("|".join(re.escape(x) for x in sorted(LABELS, key=len
 
 def _normalized(text: str) -> str:
     text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"令和\s*元\s*年", "2019年", text)
     text = re.sub(r"令和\s*(\d+)\s*年", lambda m: str(2018 + int(m[1])) + "年", text)
+    text = re.sub(r"平成\s*元\s*年", "1989年", text)
+    text = re.sub(r"平成\s*(\d+)\s*年", lambda m: str(1988 + int(m[1])) + "年", text)
     for label in ("参加費", "締切", "定員", "受講料", "会場"):
         text = re.sub(r"\s*".join(label), label, text)
     return re.sub(r"(\d[\d\s]*)([年月日])", lambda m: re.sub(r"\s+", "", m[1]) + m[2], text)

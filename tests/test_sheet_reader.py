@@ -49,6 +49,12 @@ class Service:
 
 
 class SheetReaderTest(unittest.TestCase):
+    def test_archive_policy_metadata_is_preserved_for_private_build_checks(self):
+        record = event_records_from_rows([{"event_id": "evt_past", "publication_status": "アーカイブ",
+            "review_reason_codes": "PAST_EVENT_CANDIDATE", "fee_verified": "FALSE"}])[0]
+        self.assertEqual("PAST_EVENT_CANDIDATE", record.fixed_values["review_reason_codes"])
+        self.assertFalse(record.fixed_values["fee_verified"])
+
     def test_reads_rows_and_preserves_actual_sheet_row_number(self) -> None:
         headers = list(EVENTS_HEADERS)
         event_id = headers.index("event_id")

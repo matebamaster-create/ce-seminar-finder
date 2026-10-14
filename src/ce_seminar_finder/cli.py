@@ -161,6 +161,8 @@ def _parser() -> argparse.ArgumentParser:
     refine = subparsers.add_parser("refine-candidates", help="公式候補をAIで補足し、確認待ちへ反映します（自動公開なし）")
     refine.add_argument("--input", type=Path, nargs="+", default=[])
     refine.add_argument("--from-sheet", action="store_true", help="非公開の保存済み候補からAI処理だけを再開します")
+    refine.add_argument("--pending-only", action="store_true", help="保存原文のある自動処理待ちだけを対象にします（--from-sheet必須）")
+    refine.add_argument("--include-past", action="store_true", help="選択した未処理候補の過去日程判定もAIで補完します")
     refine.add_argument("--output", type=Path, required=True)
     refine.add_argument("--summary", type=Path)
     refine.add_argument("--max-calls", type=int, default=0, help="API回数上限。0は件数制限なし")
@@ -208,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "refine-candidates":
+        if args.pending_only and not args.from_sheet:
+            raise ValueError("--pending-only requires --from-sheet")
         try:
             if args.max_calls < 0:
                 raise ValueError("--max-calls must be nonnegative")
@@ -220,8 +224,8 @@ def main(argv: list[str] | None = None) -> int:
             if not google:
                 raise ValueError("--from-sheet requires --spreadsheet-id")
             from ce_seminar_finder.collection.snapshots import read_candidate_snapshots
-            candidates = read_candidate_snapshots(google, args.spreadsheet_id)
-            if not candidates:
+            candidates = read_candidate_snapshots(google, args.spreadsheet_id, pending_only=args.pending_only)
+            if not candidates and not args.pending_only:
                 raise ValueError("No private candidate snapshots; collect the enabled sources first")
             enabled = {s.source_id for s in source_configs_from_sheet(google, args.spreadsheet_id) if s.enabled}
             candidates = [c for c in candidates if c.source_id in enabled]
@@ -240,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
                 "input_tokens": provider.input_tokens, "output_tokens": provider.output_tokens,
                 "checkpoint_candidates": len(rows)}, ensure_ascii=False), flush=True)
         refined, summary = refine_candidates(candidates, extractor, processed_keys=processed,
-            pdf_loader=pdf_loader, checkpoint=checkpoint, workers=args.workers)
+            pdf_loader=pdf_loader, checkpoint=checkpoint, workers=args.workers, include_past=args.include_past)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps([candidate_payload(c) for c in refined], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         summary.update({"model": args.model, "prompt_version": PROMPT_VERSION,
@@ -474,7 +478,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(
             json.dumps(
-                {"output": str(args.output), "event_count": payload["event_count"]},
+                {"output": str(args.output), "event_count": payload["event_count"],
+                 "archived_omitted_count": payload.get("archived_omitted_count", 0)},
                 ensure_ascii=False,
             )
         )

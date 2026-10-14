@@ -363,8 +363,11 @@ function getAdminDashboard() {
   const processingReviews = openReviews.filter(function(review) {
     return !automaticRule || String(review.reason_codes || "").trim() === "AUTO_PROCESSING_PENDING";
   });
+  const technicalReviews = openReviews.filter(function(review) {
+    return !!automaticRule && isTechnicalReview_(review.reason_codes);
+  });
   const reviews = openReviews.filter(function(review) {
-      return !!automaticRule && String(review.reason_codes || "").trim() !== "AUTO_PROCESSING_PENDING";
+      return !!automaticRule && String(review.reason_codes || "").trim() !== "AUTO_PROCESSING_PENDING" && !isTechnicalReview_(review.reason_codes);
     }).map(function (review) {
       return {
         review_id: review.review_id,
@@ -434,6 +437,9 @@ function getAdminDashboard() {
     spreadsheet_url: spreadsheet.getUrl(),
     events: events,
     reviews: reviews,
+    technical_reviews: technicalReviews.map(function(review) {
+      return {event_id:review.event_id, event_title:titleById[review.event_id] || review.event_id, reason_codes:review.reason_codes || ""};
+    }),
     sources: sources,
     stats: {
       total: events.length,
@@ -445,6 +451,7 @@ function getAdminDashboard() {
       }).length,
       review: automaticRule ? reviews.length : null,
       processing: processingReviews.length,
+      technical: technicalReviews.length,
       source_errors: sources.filter(function (source) {
         return source.consecutive_failures > 0;
       }).length,
@@ -488,6 +495,13 @@ function getAdminDashboard() {
     },
     rollout: rolloutRegions_(),
   };
+}
+
+function isTechnicalReview_(codes) {
+  const items = String(codes || "").trim().split(/\s+/).filter(Boolean);
+  return items.length > 0 && items.every(function(code) {
+    return ["AUTO_SOURCE_RECOVERY_PENDING", "AUTO_SOURCE_INTEGRITY_PENDING", "AUTO_SOURCE_SPLIT_PENDING"].indexOf(code) >= 0;
+  });
 }
 
 function getAdminExtractionDetails(eventId) {

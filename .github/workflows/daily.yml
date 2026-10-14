@@ -27,6 +27,11 @@ on:
         required: true
         default: false
         type: boolean
+      pending_ai_only:
+        description: "自動処理待ちの保存原文だけAI/PDFを補完する（再収集なし・同一入力は省略）"
+        type: boolean
+        required: false
+        default: false
       publish:
         description: "Sheetsから公開サイトを再生成する"
         required: true
@@ -80,12 +85,12 @@ jobs:
         if: github.event_name == 'push' || inputs.sync_current_events
         run: python -m ce_seminar_finder.cli init-sheet --spreadsheet-id "$CE_SPREADSHEET_ID"
       - name: Install public-page renderer
-        if: ${{ !inputs.resume_ai && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all) }}
+        if: ${{ !inputs.resume_ai && !inputs.pending_ai_only && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all) }}
         run: |
           npm install --prefix /tmp/ce-browser --no-save playwright
           /tmp/ce-browser/node_modules/.bin/playwright install --with-deps chromium
       - name: Collect explicitly enabled sources
-        if: ${{ !inputs.resume_ai && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all) }}
+        if: ${{ !inputs.resume_ai && !inputs.pending_ai_only && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all) }}
         env:
           NODE_PATH: /tmp/ce-browser/node_modules
           FULL_DETAIL: ${{ inputs.full_detail }}
@@ -110,21 +115,22 @@ jobs:
             if [[ -f "$summary" ]]; then cat "$summary" >> "$GITHUB_STEP_SUMMARY"; fi
           done
       - name: Install Japanese PDF OCR
-        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai
+        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai || inputs.pending_ai_only
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-jpn tesseract-ocr-eng
       - name: Refresh existing Google connection before AI
-        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai
+        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai || inputs.pending_ai_only
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
       - name: Refine all public candidates with AI and PDF (never auto-publish)
         id: ai-refine
-        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai
+        if: github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai || inputs.pending_ai_only
         continue-on-error: true
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RESUME_AI: ${{ inputs.resume_ai }}
+          PENDING_AI_ONLY: ${{ inputs.pending_ai_only }}
         run: |
           if [[ -z "$OPENAI_API_KEY" ]]; then
             echo "AIは未接続です。通常収集と承認済み情報の公開を継続します。" >> "$GITHUB_STEP_SUMMARY"
@@ -132,6 +138,7 @@ jobs:
           fi
           input=(--input var/*/candidates.json)
           if [[ "$RESUME_AI" == "true" ]]; then input=(--from-sheet); fi
+          if [[ "$PENDING_AI_ONLY" == "true" ]]; then input=(--from-sheet --pending-only --include-past); fi
           python -m ce_seminar_finder.cli refine-candidates \
             "${input[@]}" --max-calls 0 --include-pdf \
             --spreadsheet-id "$CE_SPREADSHEET_ID" \

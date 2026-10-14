@@ -175,6 +175,12 @@ def _date_supported(value: str, evidence: str, name: str) -> bool:
     from .rules import DATE_PATTERN, JST, _normalized
     date = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(JST)
     normalized = _normalized(evidence)
+    # A single explicit year in a same-year range also governs the short end
+    # date: 2026年11月20日〜12月10日. Never use publication year or roll years.
+    if name in {"event_end", "stream_end"}:
+        range_end = re.search(r"(20\d{2})年\s*(\d{1,2})月\s*\d{1,2}日[^\n]{0,30}?(?:〜|~|～|から)\s*(\d{1,2})月\s*(\d{1,2})日", normalized)
+        if range_end and int(range_end[1]) == date.year and int(range_end[3]) >= int(range_end[2]) and (int(range_end[3]), int(range_end[4])) == (date.month, date.day):
+            normalized = normalized[:range_end.start(3)] + str(date.year) + "年" + normalized[range_end.start(3):]
     for match in DATE_PATTERN.finditer(normalized):
         prefix = normalized[max(0, match.start()-15):match.start()]
         if name in {"event_start", "event_end", "stream_start", "stream_end"} and re.search(r"投稿日|掲載日|更新日|公開日", prefix) and not re.search(r"開催|会期|日程|配信", prefix):
@@ -187,7 +193,7 @@ def _date_supported(value: str, evidence: str, name: str) -> bool:
                 if name not in {"event_end", "stream_end"} or not re.search(
                     rf"(?:~|〜|～|-|−|－|–|—|から|to)\s*0?{date.hour}[:：時]0?{date.minute}", normalized):
                     continue
-        elif (date.hour, date.minute, date.second) not in {(0, 0, 0), (23, 59, 59)}:
+        elif (date.hour, date.minute, date.second) not in {(0, 0, 0), (23, 59, 0), (23, 59, 59)}:
             continue
         return True
     return False

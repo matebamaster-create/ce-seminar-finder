@@ -52,6 +52,7 @@ PUBLIC_FIELDS = (
 )
 
 PRIVATE_BUILD_FIELDS = ("pdf_search_terms",)
+PRIVATE_ARCHIVE_FIELDS = ("review_reason_codes", "fee_verified")
 
 REQUIRED_FIELDS = {
     "title",
@@ -176,20 +177,43 @@ def build_public_payload(
     if timestamp.tzinfo is None:
         raise ValueError("generated_at must be timezone-aware")
     events = []
+    archived_omitted = 0
     for record in records:
         archived = include_archived and record.publication_status == PublicationStatus.ARCHIVED
-        public = build_public_event(replace(record, publication_status=PublicationStatus.PUBLISHED) if archived else record)
+        if archived:
+            checks = resolve_event(record, PRIVATE_ARCHIVE_FIELDS)
+            reasons = checks["review_reason_codes"].value or []
+            if isinstance(reasons, str):
+                reasons = reasons.splitlines()
+            fee_verified = checks["fee_verified"].value
+            # Confirming that an unapproved candidate has ended is not an
+            # approval to expose its unverified details in the public archive.
+            if "PAST_EVENT_CANDIDATE" in reasons and not (
+                fee_verified is True or str(fee_verified).lower() in {"true", "1"}
+            ):
+                archived_omitted += 1
+                continue
+        try:
+            public = build_public_event(replace(record, publication_status=PublicationStatus.PUBLISHED) if archived else record)
+        except PublicationError:
+            if not archived:
+                raise
+            archived_omitted += 1
+            continue
         if public is not None:
             if archived:
                 public["archived"] = True
             events.append(public)
     events.sort(key=_sort_key)
-    return {
+    payload = {
         "schema_version": 1,
         "generated_at": timestamp.isoformat(),
         "event_count": len(events),
         "events": events,
     }
+    if archived_omitted:
+        payload["archived_omitted_count"] = archived_omitted
+    return payload
 
 
 def load_event_records(path: Path) -> list[EventRecord]:

@@ -15,7 +15,7 @@ from ce_seminar_finder.collection.sources import source_configs
 from ce_seminar_finder.collection.snapshots import SNAPSHOT_METHOD
 from ce_seminar_finder.extraction.refinement import candidate_from_payload, candidate_content_hash
 from ce_seminar_finder.extraction.validator import validate_extraction, _ground_text, _normalize_url, _fee_ground
-from ce_seminar_finder.extraction.rules import DATE_PATTERN, _normalized
+from ce_seminar_finder.extraction.rules import DATE_PATTERN, _normalized, extract_rule_values, _value_after
 from ce_seminar_finder.sheets.schema import (
     EVENTS_HEADERS, EVENT_SOURCES_HEADERS, REVIEW_QUEUE_HEADERS, AUTO_FIELD_HEADERS,
     DOCUMENTS_HEADERS, DOCUMENT_TEXT_HEADERS, FIELD_OVERRIDE_HEADERS, SOURCES_HEADERS,
@@ -31,6 +31,34 @@ REVERSE_FIELDS["application_deadline_at"] = "application_deadline"
 OPTIONAL_FIELDS = ("application_deadline_at", "application_url", "credits_text", "capacity_text")
 NON_EVENT_TITLE = re.compile(r"求人|採用|会費(?:納入|案内)|役員選挙|議事録|アンケート|実態調査|業務実態報告")
 LEARNING_TITLE = re.compile(r"セミナー|研修|講習|勉強会|カンファレンス|学術集会|学術大会|研究会|ハンズオン")
+CATALOGUE_TITLE = re.compile(r"学会[/／]研究会[/／]セミナー")
+
+
+def literal_fee_quote(value):
+    text = str(value or "").strip()
+    # Retain every qualifier and participant category in a concise fee quote.
+    # A number alone, dues, discounts or a cropped table cannot repair fees.
+    return bool(len(text) <= 180 and re.search(r"参加\s*費|受\s*講\s*料|聴\s*講\s*料|登録\s*料", text)
+                and re.search(r"無料|[\d,]+\s*円|[￥¥]\s*[\d,]+", text)
+                and not re.search(r"年会費|月会費|割引|要確認|未定|別途|[：:]\s*$", text))
+
+
+def fee_section(text):
+    match = re.search(r"参加費|受講料|聴講料|登録料|料金", _normalized(text))
+    if not match:
+        return ""
+    tail = _normalized(text)[match.end():match.end()+500]
+    return re.split(r"開催日時|開催方法|締切|締め切り|定員|対象|主催|共催|取得単位|申込方法|お問い合わせ", tail, maxsplit=1)[0]
+
+
+def comparable_fee(value):
+    return _fee_ground(re.sub(r"^(?:参加費|受講料|聴講料|登録料|料金)\s*[:：]?\s*", "", _normalized(str(value))))
+
+
+def source_url(value):
+    # Percent-escape letter case is not a different resource. Do not decode
+    # reserved path separators or treat arbitrary hosts as equivalent.
+    return re.sub(r"%[0-9a-fA-F]{2}", lambda match: match[0].upper(), _normalize_url(str(value)))
 
 
 def truth(value):
@@ -137,13 +165,13 @@ class AutomaticReviewer:
                 broken.add(sid)
                 continue
             pdfs, latest_pdf = {}, {}
-            allowed_pdf_urls = {_normalize_url(u) for u in candidate.pdf_urls}
+            allowed_pdf_urls = {source_url(u) for u in candidate.pdf_urls}
             if urlsplit(candidate.detail_url).path.lower().endswith(".pdf"):
-                allowed_pdf_urls.add(_normalize_url(candidate.detail_url))
+                allowed_pdf_urls.add(source_url(candidate.detail_url))
             for document in documents:
                 if document.get("document_type") != "pdf":
                     continue
-                url = _normalize_url(str(document.get("url") or ""))
+                url = source_url(document.get("url") or "")
                 if url not in allowed_pdf_urls:
                     continue
                 if url not in latest_pdf or str(document.get("fetched_at")) > str(latest_pdf[url].get("fetched_at")):
@@ -168,9 +196,12 @@ class AutomaticReviewer:
             return False
         mapped = REVERSE_FIELDS.get(name, name)
         for auto in autos:
-            if auto.get("field_name") != name or not self._equal(value, json_value(auto.get("normalized_value_json")), name):
+            if auto.get("field_name") != name:
                 continue
             evidence = str(auto.get("evidence_text") or "")
+            same = self._equal(value, json_value(auto.get("normalized_value_json")), name)
+            if not same and not (name == "fee_text" and literal_fee_quote(evidence) and self._equal(value, evidence, name)):
+                continue
             if not evidence:
                 continue
             for proof in proofs:
@@ -180,15 +211,24 @@ class AutomaticReviewer:
                 contexts.extend(p["text"] for id_, p in proof.pdfs.items()
                     if (p["safe"] or allow_ocr) and id_ == auto.get("source_document_id"))
                 for text in contexts:
+                    quote = evidence
+                    if name == "fee_text":
+                        section = fee_section(text)
+                        if re.search(r"非会員|会員|一般|学生", section) and re.search(r"未定|後日|別途|要相談|要確認", section):
+                            continue
+                    if auto.get("extractor") == "rule" and mapped in {"event_start", "event_end", "stream_start", "stream_end"}:
+                        # Rule quotes are normalized Gregorian dates; apply
+                        # the identical deterministic era conversion to source.
+                        text, quote = _normalized(text), _normalized(evidence)
                     result = validate_extraction({"is_event": True, "event_confidence": 1,
-                        "fields": {mapped: {"value": value, "confidence": 1, "evidence": evidence}}},
+                        "fields": {mapped: {"value": value, "confidence": 1, "evidence": quote}}},
                         allowed_urls=(), provider="grounded-policy", model="", prompt_version=POLICY, source_text=text)
                     field = result.fields.get(mapped)
                     if not field or field.value is None or result.review_reasons:
                         continue
                     if name == "format" and not self._format_supported(str(value), evidence):
                         continue
-                    if mapped in {"event_start", "event_end", "stream_start", "stream_end"} and not self._date_context(text, evidence):
+                    if mapped in {"event_start", "event_end", "stream_start", "stream_end"} and not self._date_context(text, quote):
                         continue
                     if name == "fee_text" and _fee_ground(str(value)) not in _fee_ground(evidence):
                         continue
@@ -213,7 +253,7 @@ class AutomaticReviewer:
         if isinstance(a, str) and isinstance(b, (list, tuple)):
             return a.splitlines() == list(b)
         if field == "fee_text":
-            return _fee_ground(str(a)) == _fee_ground(str(b))
+            return comparable_fee(a) == comparable_fee(b)
         if field.endswith("_at") and parsed(a) and parsed(b):
             return parsed(a) == parsed(b)
         return _ground_text(str(a)) == _ground_text(str(b))
@@ -244,30 +284,44 @@ class AutomaticReviewer:
 
     def _base_decision(self, event, proofs, autos, broken):
         if broken and not proofs:
-            return "human", ["SOURCE_SNAPSHOT_INVALID"]
+            return "technical", ["AUTO_SOURCE_INTEGRITY_PENDING"]
         if not proofs:
-            return "processing", ["AUTO_PROCESSING_PENDING"]
+            return "technical", ["AUTO_SOURCE_RECOVERY_PENDING"]
         if all(not p.candidate.block_text.strip() and not p.candidate.pdf_urls for p in proofs):
-            return "human", ["SOURCE_TEXT_UNAVAILABLE"]
+            return "technical", ["AUTO_SOURCE_RECOVERY_PENDING"]
         classification, location = self._classification(event, proofs, autos)
         title = str(event.get("title") or "")
+        if all(CATALOGUE_TITLE.search(p.candidate.title_hint) for p in proofs):
+            return "technical", ["AUTO_SOURCE_SPLIT_PENDING"]
+        if event.get("publication_status") == "確認待ち" and any(
+            re.search(r"御礼|お礼|開催報告", p.candidate.title_hint)
+            and _ground_text(title) in _ground_text(p.html)
+            and re.search(r"無事終了|盛会のうちに.{0,12}(?:終了|閉幕)|終了いたしました", p.candidate.block_text)
+            for p in proofs):
+            return "archive", ["PAST_EVENT_CANDIDATE"]
         if classification is False:
             if NON_EVENT_TITLE.search(title) and not LEARNING_TITLE.search(title):
                 return "reject", ["NON_EVENT_CANDIDATE"]
             return "human", ["EVENT_CLASSIFICATION_CONFLICT"]
-        start_field = "stream_start_at" if event.get("format") == "オンデマンド" and event.get("stream_start_at") else "event_start_at"
+        streaming = event.get("format") == "オンデマンド" or bool(not event.get("event_start_at") and event.get("stream_start_at"))
+        start_field = "stream_start_at" if streaming and event.get("stream_start_at") else "event_start_at"
         start = parsed(event.get(start_field))
-        end_field = "stream_end_at" if event.get("format") == "オンデマンド" else "event_end_at"
+        end_field = "stream_end_at" if streaming else "event_end_at"
         end = parsed(event.get(end_field))
         # A reversed range or a month-spanning live event needs schedule-level
         # review, even when both dates occur somewhere in a long source page.
-        if start and end and (end < start or event.get("format") != "オンデマンド"
+        if start and end and (end < start or not streaming
                               and end - start > timedelta(days=31)):
             return "human", ["DATE_CONFLICT"]
         if start and self._support(event, start_field, proofs, autos):
+            for auto in autos:
+                alternate = json_value(auto.get("normalized_value_json"))
+                if auto.get("field_name") == start_field and parsed(alternate) and parsed(alternate) != start and self._support({**event, start_field: alternate}, start_field, proofs, [auto]):
+                    if (parsed(alternate).date() >= self.now.astimezone(start.tzinfo).date()) != (start.date() >= self.now.astimezone(start.tzinfo).date()):
+                        return "human", ["SOURCE_FIELD_CONFLICT"]
             if end and self._support(event, end_field, proofs, autos) and end < self.now:
                 return "archive", ["PAST_EVENT_CANDIDATE"]
-            if event.get("format") != "オンデマンド" and not end and start.date() < self.now.astimezone(start.tzinfo).date():
+            if not streaming and not end and start.date() < self.now.astimezone(start.tzinfo).date():
                 future_dates = []
                 for proof in proofs:
                     for match in DATE_PATTERN.finditer(_normalized(proof.text)):
@@ -295,8 +349,8 @@ class AutomaticReviewer:
         if any(event.get(f) and not self._support(event, f, proofs, autos)
                for f in ("event_end_at", "stream_end_at")):
             reasons.append("DATE_CONFLICT")
-        official = _normalize_url(str(event.get("primary_official_url") or ""))
-        if not official or not any(official == _normalize_url(p.candidate.detail_url) for p in proofs):
+        official = source_url(event.get("primary_official_url") or "")
+        if not official or not any(official == source_url(p.candidate.detail_url) for p in proofs):
             reasons.append("OFFICIAL_URL_UNVERIFIED")
         if start and start > self.now + timedelta(days=730):
             reasons.append("DATE_OUTSIDE_NORMAL_RANGE")
@@ -307,6 +361,49 @@ class AutomaticReviewer:
                     if self._support({**event, field: other}, field, proofs, autos):
                         reasons.append("SOURCE_FIELD_CONFLICT")
         return ("human", sorted(set(reasons))) if reasons else ("publish", [])
+
+    def _repair_fields(self, event, proofs, autos):
+        """Reconcile saved source facts locally, without another AI request.
+
+        Only an unedited pending record calls this method. A field changes only
+        when every independently grounded proposal agrees; conflicting source
+        facts and unsafe/OCR-only PDF values remain unresolved.
+        """
+        repaired, supporting = dict(event), list(autos)
+        if self._classification(event, proofs, autos)[0] is not True or any(CATALOGUE_TITLE.search(p.candidate.title_hint) for p in proofs):
+            return repaired, supporting
+        rules = []
+        for proof in proofs:
+            contexts = [(proof.event_source_id, proof.candidate.block_text)]
+            # Do not interpret an unrelated linked PDF or OCR as this event's
+            # schedule. Require the event title within its safe text layer.
+            event_title = _ground_text(str(event.get("title") or ""))
+            contexts.extend((doc, pdf["text"]) for doc, pdf in proof.pdfs.items()
+                if pdf["safe"] and len(event_title) >= 8 and event_title in _ground_text(pdf["text"]))
+            for doc, text in contexts:
+                for name, field in extract_rule_values(text).items():
+                    target = FIELD_MAP.get(name, name)
+                    if target:
+                        rules.append({"field_name": target, "normalized_value_json": json.dumps(field.value, ensure_ascii=False),
+                            "evidence_text": field.evidence, "extractor": "rule", "source_document_id": doc})
+        supporting.extend(rules)
+        for name in ("organizer_name", "format", "fee_text", "event_start_at", "event_end_at", "stream_start_at", "stream_end_at"):
+            if self._support(repaired, name, proofs, supporting):
+                continue
+            values = []
+            for auto in supporting:
+                if auto.get("field_name") != name:
+                    continue
+                choices = [json_value(auto.get("normalized_value_json"))]
+                if name == "fee_text" and literal_fee_quote(auto.get("evidence_text")) and not (choices[0] not in (None, "") and self._support({**repaired, name: choices[0]}, name, proofs, [auto])):
+                    choices.append(auto["evidence_text"])
+                for value in choices:
+                    if value not in (None, "") and self._support({**repaired, name: value}, name, proofs, [auto]):
+                        if not any(self._equal(value, old, name) for old in values):
+                            values.append(value)
+            if len(values) == 1:
+                repaired[name] = values[0]
+        return repaired, supporting
 
     def run(self, *, dry_run=False):
         specs = self.read()
@@ -330,13 +427,24 @@ class AutomaticReviewer:
         overridden = {r.get("event_id") for r in self.tables["FieldOverrides"] if truth(r.get("active"))}
         events = {r["event_id"]: r for r in self.tables["Events"] if r.get("event_id")}
         decisions = {}
+        link_repairs = {}
+        field_repairs = {}
         for id_, event in events.items():
             sources = source_by_event[id_]
             if not sources:
                 decisions[id_] = ("protected", [])
                 continue
             items = [proofs[s["event_source_id"]] for s in sources if s.get("event_source_id") in proofs]
-            decision = self._base_decision(event, items, auto_by_event[id_], any(s.get("event_source_id") in broken for s in sources))
+            repaired, auto_by_event[id_] = self._repair_fields(event, items, auto_by_event[id_])
+            probe = event
+            if event.get("publication_status") == "確認待ち" and not event.get("last_admin_updated_at") and id_ not in overridden:
+                probe = repaired
+                field_repairs[id_] = {k: v for k, v in probe.items() if v != event.get(k)}
+                urls = {source_url(p.candidate.detail_url) for p in items}
+                if len(urls) == 1 and source_url(probe.get("primary_official_url") or "") not in urls and self._support(probe, "title", items, auto_by_event[id_]):
+                    link_repairs[id_] = min(p.candidate.detail_url for p in items)
+                    probe = {**probe, "primary_official_url": link_repairs[id_]}
+            decision = self._base_decision(probe, items, auto_by_event[id_], any(s.get("event_source_id") in broken for s in sources))
             # Human choices and overrides never become implicit publication.
             if event.get("last_admin_updated_at") or id_ in overridden or event.get("publication_status") in {"非公開", "アーカイブ"}:
                 if event.get("publication_status") != "公開":
@@ -345,7 +453,8 @@ class AutomaticReviewer:
                     decision = ("human", ["EVENT_CLASSIFICATION_CONFLICT"])
             decisions[id_] = decision
         self.duplicate_updates = []
-        self._duplicates(events, decisions, source_by_event, proofs)
+        effective_events = {id_: {**event, **field_repairs.get(id_, {})} for id_, event in events.items()}
+        self._duplicates(effective_events, decisions, source_by_event, proofs)
         summary = {"enabled": True, "policy": POLICY, "input": len(events), "written": 0,
                    **dict(Counter(action for action, _ in decisions.values()))}
         summary["reason_counts"] = dict(Counter(reason for _, reasons in decisions.values() for reason in reasons))
@@ -380,6 +489,9 @@ class AutomaticReviewer:
             if human_owned and event.get("publication_status") == "公開" and action == "archive":
                 after.update({"publication_status": "アーカイブ", "archived_at": now})
             if not human_owned:
+                after.update(field_repairs.get(id_, {}))
+                if id_ in link_repairs:
+                    after["primary_official_url"] = link_repairs[id_]
                 after.update({"auto_publish_eligible": action == "publish", "review_reason_codes": "\n".join(reasons),
                     "review_reason_display": "自動処理待ち" if action == "processing" else "・".join(reason_label(r) for r in reasons),
                     "review_label": "あり" if action == "human" else "なし"})
@@ -411,18 +523,20 @@ class AutomaticReviewer:
                     updated.update({"reason_codes": "\n".join(reasons), "decision_note": "公式原文の自動照合で解消できない項目だけを残しています。"})
                 elif action == "processing":
                     updated.update({"reason_codes": "AUTO_PROCESSING_PENDING", "priority": "低", "decision_note": "人の確認ではなくAI/PDF処理待ちです。"})
+                elif action == "technical":
+                    updated.update({"reason_codes": "\n".join(reasons), "priority": "低", "decision_note": "人の判断ではなく、収集側の原文復旧・処理方法の修正が必要です。未確認のまま公開はしません。"})
                 else:
                     updated.update({"decision": {"publish": "公開", "archive": "非公開", "reject": "非公開", "merge": "重複統合"}[action],
                         "decided_at": now, "decision_note": "公式原文に基づく自動" + {"publish": "公開", "archive": "終了整理", "reject": "対象外整理", "merge": "重複整理"}[action],
                         "automation_choice": "自動公開" if action == "publish" else "非公開"})
                 if clean(updated) != clean(review):
                     changed_reviews.append(updated)
-            if action == "human" and not reviews[id_]:
+            if action in {"human", "technical", "processing"} and not reviews[id_]:
                 changed_reviews.append({"review_id": stable_id("rev_auto_", id_), "event_id": id_,
                     "priority": "通常", "reason_codes": "\n".join(reasons), "suggested_action": "修正",
                     "source_urls": event.get("primary_official_url", ""), "opened_at": now,
                     "decision": "未判断", "automation_choice": "次回も確認",
-                    "decision_note": "公式原文の自動照合で解消できない項目だけを残しています。"})
+                    "decision_note": "公式原文の判断が必要です。" if action == "human" else "収集・自動処理側の対応待ちです。"})
             review_writes.extend(changed_reviews)
             if clean(after) != clean(event) or changed_reviews:
                 digest = hashlib.sha256(json.dumps({"before": clean(event), "action": action, "reasons": reasons,
@@ -445,6 +559,7 @@ class AutomaticReviewer:
                 and events[r["event_id"]].get("publication_status") != status for r in event_writes)
         summary["newly_merged"] = sum(r.get("duplicate_status") == "統合済み"
             and events[r["event_id"]].get("duplicate_status") != "統合済み" for r in event_writes)
+        summary["fields_repaired"] = sum(len(field_repairs.get(r["event_id"], {})) for r in event_writes)
         return summary
 
     def _optional_support(self, event, field, proofs, autos):
@@ -474,7 +589,7 @@ class AutomaticReviewer:
             if pair.get("status") in {"統合済み", "別イベント"}:
                 continue
             a, b = pair.get("event_id_a"), pair.get("event_id_b")
-            if a not in events or b not in events or any(decisions[x][0] in {"archive", "reject", "merge", "processing"}
+            if a not in events or b not in events or any(decisions[x][0] in {"archive", "reject", "merge", "processing", "technical"}
                     or decisions[x][0] == "protected" and events[x].get("publication_status") != "公開" for x in (a, b)):
                 continue
             ea, eb = events[a], events[b]
@@ -526,7 +641,8 @@ class AutomaticReviewer:
 
 
 def reason_label(code):
-    labels = {"DATE_UNKNOWN": "開催日が確認できません", "DATE_CONFLICT": "開催日時・終了日時の根拠が一致しません",
+    labels = {"AUTO_SOURCE_RECOVERY_PENDING": "収集側対応待ち：公式原文の再取得・復旧", "AUTO_SOURCE_INTEGRITY_PENDING": "収集側対応待ち：保存原文の整合性復旧",
+        "AUTO_SOURCE_SPLIT_PENDING": "収集側対応待ち：一覧を個別イベントへ分割", "DATE_UNKNOWN": "開催日が確認できません", "DATE_CONFLICT": "開催日時・終了日時の根拠が一致しません",
         "SOURCE_FIELD_CONFLICT": "掲載元どうしで日時・料金などが食い違っています", "SOURCE_TEXT_UNAVAILABLE": "公式本文を取得できていません",
         "OFFICIAL_URL_UNVERIFIED": "公式URLの根拠を確認できません", "EVENT_CLASSIFICATION_CONFLICT": "イベント告知か判断が分かれます",
         "DUPLICATE_CANDIDATE": "同じイベントの可能性があります", "SOURCE_SNAPSHOT_INVALID": "保存原文の整合性を確認できません",

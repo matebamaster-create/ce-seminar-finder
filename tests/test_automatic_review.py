@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -40,6 +41,106 @@ def setup(items=None, *, ai=True):
 
 
 class AutomaticReviewTest(unittest.TestCase):
+    def test_safe_pdf_rule_values_repair_missing_schedule_without_ai_resend(self):
+        item = candidate()
+        text = item.block_text
+        url = "https://www.narace.jp/poster.pdf"
+        item = replace(item, block_text="第10回 呼吸セミナー 詳細はPDFをご覧ください。", pdf_urls=(url,),
+            extracted_fields={"title": ExtractedField(item.title_hint, 1, item.title_hint)},
+            pdf_documents=({"url":url, "document_type":"pdf", "sha256":"fixture", "extraction_status":"success", "extraction_method":"text_layer",
+                "chunks":[{"chunk_index":0,"page_from":1,"page_to":1,"text":text,"text_hash":hashlib.sha256(text.encode()).hexdigest()}]},))
+        s, reviewer = setup([item])
+        self.assertEqual(1, reviewer.run()["newly_published"])
+        self.assertEqual("2026-11-20T19:00:00+09:00", s.objects("Events")[0]["event_start_at"])
+        self.assertEqual("公開", s.objects("Events")[0]["publication_status"])
+        self.assertEqual(0, reviewer.run()["written"])
+
+    def test_unrelated_pdf_title_cannot_supply_schedule_for_current_event(self):
+        item = candidate()
+        url = "https://www.narace.jp/other.pdf"
+        text = candidate(title="第11回 呼吸セミナー").block_text
+        item = replace(item, block_text=item.title_hint, pdf_urls=(url,), extracted_fields={},
+            pdf_documents=({"url":url,"document_type":"pdf","sha256":"fixture","extraction_status":"success","extraction_method":"text_layer",
+                "chunks":[{"chunk_index":0,"page_from":1,"page_to":1,"text":text,"text_hash":hashlib.sha256(text.encode()).hexdigest()}]},))
+        s, reviewer = setup([item])
+        self.assertEqual(1, reviewer.run()["human"])
+        self.assertEqual("", s.objects("Events")[0]["event_start_at"])
+
+    def test_missing_source_snapshot_is_technical_not_human_or_ai_queue(self):
+        s, reviewer = setup(ai=False)
+        s.tables["Documents"] = [s.tables["Documents"][0]]
+        s.tables["DocumentTextChunks"] = [s.tables["DocumentTextChunks"][0]]
+        self.assertEqual(1, reviewer.run()["technical"])
+        self.assertIn("AUTO_SOURCE_RECOVERY_PENDING", s.objects("ReviewQueue")[0]["reason_codes"])
+        self.assertEqual("なし", s.objects("Events")[0]["review_label"])
+        self.assertEqual("確認待ち", s.objects("Events")[0]["publication_status"])
+
+    def test_normalized_era_rule_quote_can_confirm_expired_event(self):
+        s, reviewer = setup([candidate(date="令和8年9月20日")], ai=False)
+        self.assertEqual(1, reviewer.run()["newly_archived"])
+
+    def test_explicit_completed_report_is_archived_without_guessing_date_year(self):
+        title = "第15回学術大会"
+        item = replace(candidate(title=title), title_hint=title+"の御礼",
+            block_text=title+" 無事終了いたしました。6月28日に開催した大会は盛会でした。", extracted_fields={})
+        s, reviewer = setup([item], ai=False)
+        self.assertEqual(1, reviewer.run()["newly_archived"])
+
+    def test_pre_event_greeting_is_not_a_completed_report(self):
+        item = replace(candidate(), title_hint="第10回 呼吸セミナー ご挨拶",
+            block_text="第10回 呼吸セミナー 昨年の大会は無事終了。次回はこれから案内します。", extracted_fields={})
+        s, reviewer = setup([item], ai=False)
+        self.assertEqual(1, reviewer.run()["processing"])
+
+    def test_year_omission_within_explicit_same_year_stream_range_is_supported(self):
+        item = candidate()
+        quote = "配信期間 2026年11月20日から12月10日"
+        item = replace(item, block_text=item.block_text+"\n"+quote, extracted_fields={**item.extracted_fields,
+            "format": ExtractedField("オンデマンド", 1, "Web配信（オンデマンド）"),
+            "stream_start": ExtractedField("2026-11-20T00:00:00+09:00", 1, quote),
+            "stream_end": ExtractedField("2026-12-10T23:59:00+09:00", 1, quote)})
+        item = replace(item, block_text=item.block_text.replace("開催方法 Web（Zoom）", "開催方法 オンデマンド")+"\nWeb配信（オンデマンド）")
+        s, reviewer = setup([item])
+        self.assertEqual(1, reviewer.run()["newly_published"])
+
+    def test_year_omission_is_not_inferred_across_calendar_years(self):
+        from ce_seminar_finder.extraction.validator import _date_supported
+        self.assertFalse(_date_supported("2027-01-10T23:59:00+09:00", "2026年12月20日から1月10日", "stream_end"))
+
+    def test_past_stream_range_can_be_archived_without_guessed_format(self):
+        item = candidate()
+        quote = "配信期間 2026年9月20日00:00から2026年9月25日23:59"
+        item = replace(item, block_text=quote, extracted_fields={
+            "stream_start": ExtractedField("2026-09-20T00:00:00+09:00", 1, quote),
+            "stream_end": ExtractedField("2026-09-25T23:59:00+09:00", 1, quote)})
+        s, reviewer = setup([item], ai=False)
+        self.assertEqual(1, reviewer.run()["newly_archived"])
+
+    def test_original_document_link_repairs_unedited_ai_homepage_choice(self):
+        item = candidate(url="https://www.narace.jp/events/one")
+        item = replace(item, block_text=item.block_text + "\n主催者HP https://www.narace.jp/",
+            extracted_fields={**item.extracted_fields, "official_url": ExtractedField("https://www.narace.jp/", 1, "主催者HP https://www.narace.jp/")})
+        s, reviewer = setup([item])
+        self.assertEqual(1, reviewer.run()["newly_published"])
+        self.assertEqual(item.detail_url, s.objects("Events")[0]["primary_official_url"])
+        self.assertIn('https://www.narace.jp/', s.objects("ReviewActions")[0]["before_json"])
+
+    def test_original_link_repair_does_not_replace_admin_choice(self):
+        item = candidate(url="https://www.narace.jp/events/one")
+        s, reviewer = setup([item])
+        h, row = s.tables["Events"][:2]
+        row[h.index("primary_official_url")] = "https://www.narace.jp/"
+        row[h.index("last_admin_updated_at")] = "2026-10-13T00:00:00+09:00"
+        reviewer.run()
+        self.assertEqual("https://www.narace.jp/", s.objects("Events")[0]["primary_official_url"])
+
+    def test_percent_escape_case_is_not_an_official_url_conflict(self):
+        item = candidate(url="https://www.narace.jp/events/%e5%8b%89%e5%bc%b7/")
+        s, reviewer = setup([item])
+        h, row = s.tables["Events"][:2]
+        row[h.index("primary_official_url")] = "https://www.narace.jp/events/%E5%8B%89%E5%BC%B7/"
+        self.assertEqual(1, reviewer.run()["newly_published"])
+
     def test_policy_disabled_by_default(self):
         s, _ = setup()
         s.tables["AutomationRules"] = [s.tables["AutomationRules"][0]]
@@ -67,14 +168,37 @@ class AutomaticReviewTest(unittest.TestCase):
         self.assertEqual(1, reviewer.run(dry_run=True)["publish"])
         self.assertEqual(before, json.dumps(s.tables, sort_keys=True))
 
-    def test_bad_fee_and_high_ai_confidence_cannot_authorize_publication(self):
+    def test_bad_unedited_fee_is_corrected_from_saved_original_before_publication(self):
         s, reviewer = setup()
         h, row = s.tables["Events"][:2]
         row[h.index("fee_text")] = "会員2,000円 非会員1,000円"
         summary = reviewer.run()
-        self.assertEqual(1, summary["human"])
-        self.assertEqual("確認待ち", s.objects("Events")[0]["publication_status"])
+        self.assertEqual(1, summary["newly_published"])
+        self.assertEqual("会員1,000円 非会員2,000円", s.objects("Events")[0]["fee_text"])
+        self.assertGreater(summary["fields_repaired"], 0)
+
+    def test_grounded_fee_excerpt_can_replace_unsupported_model_rephrasing(self):
+        item = candidate()
+        bad = ExtractedField("会員900円 非会員2,000円", 1, "参加費 会員1,000円 非会員2,000円")
+        s, reviewer = setup([replace(item, extracted_fields={**item.extracted_fields, "fee_text": bad})])
+        self.assertEqual(1, reviewer.run()["newly_published"])
+        self.assertNotIn("900円", s.objects("Events")[0]["fee_text"])
+
+    def test_ungrounded_fee_is_not_repaired_by_confidence_or_unsafe_text(self):
+        item = candidate()
+        item = replace(item, block_text=item.block_text.split("参加費")[0], extracted_fields={**item.extracted_fields,
+            "fee_text": ExtractedField("会員900円", 1, "参加費 会員900円")})
+        s, reviewer = setup([item])
+        self.assertEqual(1, reviewer.run()["human"])
         self.assertIn("AUTO_FEE_TEXT_UNVERIFIED", s.objects("ReviewQueue")[0]["reason_codes"])
+
+    def test_rule_repair_never_changes_admin_fee(self):
+        s, reviewer = setup()
+        h, row = s.tables["Events"][:2]
+        row[h.index("fee_text")] = "会員900円"
+        row[h.index("last_admin_updated_at")] = NOW.isoformat()
+        reviewer.run()
+        self.assertEqual("会員900円", s.objects("Events")[0]["fee_text"])
 
     def test_missing_ai_is_processing_not_human_review(self):
         s, reviewer = setup(ai=False)
@@ -123,8 +247,8 @@ class AutomaticReviewTest(unittest.TestCase):
     def test_changed_source_or_missing_snapshot_never_auto_publishes(self):
         s, reviewer = setup()
         s.tables["DocumentTextChunks"][1][4] += "改変"
-        self.assertEqual(1, reviewer.run()["human"])
-        self.assertIn("SOURCE_SNAPSHOT_INVALID", s.objects("ReviewQueue")[0]["reason_codes"])
+        self.assertEqual(1, reviewer.run()["technical"])
+        self.assertIn("AUTO_SOURCE_INTEGRITY_PENDING", s.objects("ReviewQueue")[0]["reason_codes"])
 
     def test_ambiguous_duplicate_is_left_for_human(self):
         a, b = candidate(), candidate(url="https://www.narace.jp/#two")
@@ -143,6 +267,12 @@ class AutomaticReviewTest(unittest.TestCase):
     def test_unpriced_text_is_not_treated_as_free(self):
         item = candidate(fee="後日案内")
         item = replace(item, extracted_fields={**item.extracted_fields, "fee_text": ExtractedField("後日案内", 1, "参加費 後日案内")})
+        s, reviewer = setup([item])
+        self.assertEqual(1, reviewer.run()["human"])
+        self.assertFalse(s.objects("Events")[0]["fee_verified"])
+
+    def test_partial_member_fee_does_not_erase_unannounced_nonmember_fee(self):
+        item = candidate(fee="会員無料 非会員の料金は後日案内")
         s, reviewer = setup([item])
         self.assertEqual(1, reviewer.run()["human"])
         self.assertFalse(s.objects("Events")[0]["fee_verified"])
@@ -170,7 +300,9 @@ class AutomaticReviewTest(unittest.TestCase):
         self.assertEqual("非公開", s.objects("Events")[0]["publication_status"])
 
     def test_ocr_only_facts_cannot_auto_publish(self):
-        s, reviewer = setup()
+        item = candidate()
+        item = replace(item, block_text=item.block_text.split("参加費")[0])
+        s, reviewer = setup([item])
         event = s.objects("Events")[0]
         autos = s.tables["AutoFieldValues"]
         h = autos[0]

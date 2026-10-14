@@ -32,6 +32,24 @@ def ai_payload():
 
 
 class RefinementTest(unittest.TestCase):
+    def test_old_post_date_does_not_skip_future_date_in_announcement_title(self):
+        item = replace(candidate(), title_hint="2020年1月1日：2099年11月1日 呼吸セミナー",
+            extracted_fields={"event_start":
+                ExtractedField("2020-01-01T00:00:00+09:00", .9, "2020年1月1日")})
+        _, stats = refine_candidates([item], extractor(ai_payload()))
+        self.assertEqual(1, stats["requests"])
+
+    def test_explicit_selected_past_input_still_respects_completed_keys(self):
+        item = replace(candidate(), extracted_fields={"event_start":
+            ExtractedField("2020-01-01T00:00:00+09:00", .9, "2020年1月1日")})
+        _, skipped = refine_candidates([item], extractor(ai_payload()))
+        self.assertEqual(0, skipped["requests"])
+        refined, stats = refine_candidates([item], extractor(ai_payload()), include_past=True)
+        self.assertEqual(1, stats["requests"])
+        replay, stats = refine_candidates([item], extractor(ai_payload()), include_past=True,
+            processed_keys={refined[0].ai_cache_key})
+        self.assertEqual([], replay)
+        self.assertEqual(0, stats["requests"])
     def test_ai_metadata_persists_and_unchanged_input_does_not_call_api_again(self):
         sheets = FakeSheets()
         service = extractor(ai_payload())

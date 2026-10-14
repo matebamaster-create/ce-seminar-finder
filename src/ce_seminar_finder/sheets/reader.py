@@ -5,7 +5,7 @@ from typing import Any
 
 from ce_seminar_finder.enums import PublicationStatus
 from ce_seminar_finder.models import EventRecord
-from ce_seminar_finder.publisher import PUBLIC_FIELDS
+from ce_seminar_finder.publisher import PUBLIC_FIELDS, PRIVATE_ARCHIVE_FIELDS
 
 from .schema import EVENTS_HEADERS
 
@@ -48,7 +48,7 @@ def event_records_from_rows(rows: list[dict[str, Any]]) -> list[EventRecord]:
                 row.get(field),
                 multi_value=field in MULTI_VALUE_FIELDS,
             )
-            for field in PUBLIC_FIELDS
+            for field in (*PUBLIC_FIELDS, *PRIVATE_ARCHIVE_FIELDS)
             if row.get(field) not in (None, "")
         }
         records.append(

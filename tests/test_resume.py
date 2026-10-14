@@ -15,6 +15,21 @@ from ce_seminar_finder.sheets.requests import execute_idempotent
 
 
 class ResumeTest(unittest.TestCase):
+    def test_pending_resume_selects_only_current_machine_queue_snapshots(self):
+        sheets = FakeSheets()
+        first = candidate()
+        other = replace(candidate(), detail_url="https://www.narace.jp/other", title_hint="別の呼吸セミナー")
+        CandidateIngestor(sheets, "test").ingest([first, other])
+        h, row = sheets.tables["Events"][:2]
+        row[h.index("review_reason_codes")] = "AUTO_PROCESSING_PENDING"
+        resumed = read_candidate_snapshots(sheets, "test", pending_only=True)
+        self.assertEqual([first.detail_url], [c.detail_url for c in resumed])
+
+    def test_empty_machine_queue_is_a_successful_noop(self):
+        sheets = FakeSheets()
+        CandidateIngestor(sheets, "test").ingest([candidate()])
+        self.assertEqual([], read_candidate_snapshots(sheets, "test", pending_only=True))
+
     def test_tls_eof_retries_idempotent_request_without_changing_credentials(self):
         class Request:
             def __init__(self): self.calls = 0

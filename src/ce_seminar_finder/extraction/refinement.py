@@ -125,7 +125,8 @@ def fit_request(request, max_chars):
 
 def refine_candidates(candidates: list[EventCandidate], service: ExtractionService,
                       *, processed_keys: set[str] | None = None, pdf_loader=None,
-                      checkpoint=None, checkpoint_size: int = 20, workers: int = 1) -> tuple[list[EventCandidate], dict]:
+                      checkpoint=None, checkpoint_size: int = 20, workers: int = 1,
+                      include_past: bool = False) -> tuple[list[EventCandidate], dict]:
     processed = processed_keys or set()
     refined, skipped, errors, pending = [], 0, [], []
     checkpoint_failed = False
@@ -193,10 +194,18 @@ def refine_candidates(candidates: list[EventCandidate], service: ExtractionServi
             continue
         end = next((candidate.extracted_fields[k].value for k in ("stream_end", "event_end", "event_start")
             if k in candidate.extracted_fields and candidate.extracted_fields[k].value), None)
-        if end:
+        if end and not include_past:
             try:
+                from .rules import DATE_PATTERN, JST, _normalized
                 date = datetime.fromisoformat(str(end))
-                if date.tzinfo and date < datetime.now(UTC) - timedelta(days=45):
+                today = datetime.now(UTC).astimezone(JST).date()
+                title_has_future_date = False
+                for match in DATE_PATTERN.finditer(_normalized(candidate.title_hint)):
+                    try:
+                        title_has_future_date |= datetime(int(match["year"]), int(match["month"]), int(match["day"])).date() >= today
+                    except ValueError:
+                        pass
+                if date.tzinfo and date < datetime.now(UTC) - timedelta(days=45) and not title_has_future_date:
                     skipped += 1
                     counts["skipped"] += 1
                     continue
