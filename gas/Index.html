@@ -432,7 +432,7 @@
         ["未公開候補", state.data.stats.pending],
         ["自動処理待ち", state.data.stats.processing || 0],
         ["収集側対応待ち", state.data.stats.technical || 0],
-        ["人の確認が必要", state.data.automatic_review?.configured ? state.data.stats.review : "判定中"],
+        ["人の確認が必要", state.data.automatic_review?.reassessment_pending ? "再判定待ち" : state.data.automatic_review?.configured ? state.data.stats.review : "判定中"],
         ["取得エラー", state.data.stats.source_errors],
       ];
       const root = document.getElementById("stats");
@@ -444,6 +444,7 @@
       const automatic = state.data.automatic_review || {};
       document.getElementById("automatic-review-status").textContent = !automatic.configured
         ? "初期設定待ちです。一括処理の終了後、既存の確認案件を公式原文と照合して再判定します。"
+        : automatic.reassessment_pending ? "収集結果の再判定待ちです。表示中の確認一覧は暫定で、全件を手作業で確認する必要はありません。原文照合と保存が終わると確定件数へ更新します。"
         : automatic.enabled ? "公式原文で日時・料金などを確認できた候補を自動公開します。判断理由と変更履歴は保存されます。"
         : "条件付き自動公開は停止中です。収集とAI補足は継続します。";
       const automaticButton = document.getElementById("automatic-review-button");

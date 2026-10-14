@@ -73,6 +73,10 @@ class FakeSheets:
                 target.extend([""] * max(0, offset + len(values) - len(target)))
                 target[offset:offset + len(values)] = values
         return Execute({})
+    def append(self, **kwargs):
+        sheet = kwargs["range"].split("!")[0].strip("'")
+        self.tables[sheet].extend(kwargs["body"]["values"])
+        return Execute({})
     def objects(self, sheet):
         headers, *rows = self.tables[sheet]
         return [dict(zip(headers, row)) for row in rows]

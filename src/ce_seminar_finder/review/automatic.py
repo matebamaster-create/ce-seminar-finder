@@ -24,6 +24,7 @@ from ce_seminar_finder.sheets.schema import (
 from .duplicates import normalize_title, normalize_organizer
 
 POLICY = "grounded_v1"
+POLICY_REVISION = "grounded_facts_r2"
 RULE_ID = "rule_grounded_v1_west20261013"
 ACTOR = "automation:grounded_v1"
 REVERSE_FIELDS = {v: k for k, v in FIELD_MAP.items()}
@@ -595,6 +596,12 @@ class AutomaticReviewer:
         summary["newly_merged"] = sum(r.get("duplicate_status") == "統合済み"
             and events[r["event_id"]].get("duplicate_status") != "統合済み" for r in event_writes)
         summary["fields_repaired"] = sum(len(field_repairs.get(r["event_id"], {})) for r in event_writes)
+        # Last marker confirms all decision writes, not merely AI collection.
+        # Append one private, bounded record; no raw text or input keys.
+        summary_json = json.dumps({**summary, "policy_revision": POLICY_REVISION}, ensure_ascii=False)
+        self._write_rows("ReviewActions", [{"action_id": stable_id("act_auto_summary_", POLICY_REVISION, now, summary_json),
+            "action": "auto_review_summary", "after_json": summary_json,
+            "actor": ACTOR, "acted_at": now, "automation_choice": POLICY, "note": "原文照合と保存完了の集計。公開サイトへの反映とは別。"}], REVIEW_ACTION_HEADERS)
         return summary
 
     def _optional_support(self, event, field, proofs, autos):
@@ -662,6 +669,19 @@ class AutomaticReviewer:
             return
         existing = self.tables.get(name, [])
         by_key = {r.get(headers[0]): r for r in existing if r.get(headers[0])}
+        if name == "ReviewActions":
+            fresh = [r for r in rows if r.get(headers[0]) not in by_key]
+            if fresh:
+                if self.writer.ensure_capacity:
+                    self.writer.ensure_capacity({name: max((r.get("__row_number", 1) for r in existing), default=1) + len(fresh) + 1})
+                # Server-side append preserves audit rows added concurrently by
+                # the admin UI. On ambiguous transport failure, stop; a resumed
+                # run reads action IDs before retrying, rather than re-appending.
+                self.writer.api.append(spreadsheetId=self.writer.spreadsheet_id, range="'ReviewActions'!A:J",
+                    valueInputOption="RAW", insertDataOption="INSERT_ROWS",
+                    body={"values": [[_cell(row.get(h, "")) for h in headers] for row in fresh]}).execute()
+                self.tables[name].extend(fresh)
+            return
         next_row = max((r["__row_number"] for r in existing), default=1) + 1
         data = []
         for row in rows:

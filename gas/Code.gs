@@ -360,6 +360,10 @@ function getAdminDashboard() {
   const automaticRule = sheetObjects_(requiredSheet_(spreadsheet, "AutomationRules")).find(function(rule) {
     return rule.rule_id === "rule_grounded_v1_west20261013";
   });
+  const lastReview = latestAutomaticReviewSummary_(spreadsheet);
+  const reassessmentPending = !!automaticRule && (!lastReview || events.some(function(event) {
+    return new Date(event.last_auto_fetched_at || 0).getTime() > new Date(lastReview.acted_at).getTime();
+  }));
   const processingReviews = openReviews.filter(function(review) {
     return !automaticRule || String(review.reason_codes || "").trim() === "AUTO_PROCESSING_PENDING";
   });
@@ -449,14 +453,14 @@ function getAdminDashboard() {
       pending: events.filter(function (event) {
         return event.publication_status === "確認待ち";
       }).length,
-      review: automaticRule ? reviews.length : null,
+      review: automaticRule && !reassessmentPending ? reviews.length : null,
       processing: processingReviews.length,
       technical: technicalReviews.length,
       source_errors: sources.filter(function (source) {
         return source.consecutive_failures > 0;
       }).length,
     },
-    automatic_review: {configured: !!automaticRule, enabled: !!automaticRule && truthy_(automaticRule.enabled)},
+    automatic_review: {configured: !!automaticRule, enabled: !!automaticRule && truthy_(automaticRule.enabled), reassessment_pending: reassessmentPending},
     connections: {
       github_actions: github.connected,
       github_message: github.message,
@@ -502,6 +506,21 @@ function isTechnicalReview_(codes) {
   return items.length > 0 && items.every(function(code) {
     return ["AUTO_SOURCE_RECOVERY_PENDING", "AUTO_SOURCE_INTEGRITY_PENDING", "AUTO_SOURCE_SPLIT_PENDING"].indexOf(code) >= 0;
   });
+}
+
+function latestAutomaticReviewSummary_(spreadsheet) {
+  const sheet = requiredSheet_(spreadsheet, "ReviewActions");
+  const last = sheet.getLastRow();
+  if (last < 2) return null;
+  const start = Math.max(2, last - 49);
+  const rows = sheet.getRange(start, 1, last-start+1, 9).getValues();
+  for (let i = rows.length-1; i >= 0; i--) {
+    if (rows[i][3] !== "auto_review_summary") continue;
+    let summary;
+    try { summary = JSON.parse(rows[i][5] || "{}"); } catch (error) { continue; }
+    if (summary.policy_revision === "grounded_facts_r2") return {acted_at:rows[i][8], summary:summary};
+  }
+  return null;
 }
 
 function getAdminExtractionDetails(eventId) {

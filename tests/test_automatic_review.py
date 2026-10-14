@@ -167,7 +167,8 @@ class AutomaticReviewTest(unittest.TestCase):
         self.assertEqual(ACTOR, s.objects("ReviewActions")[0]["actor"])
         self.assertEqual(1, summary["newly_published"])
         self.assertEqual(0, reviewer.run()["written"])
-        self.assertEqual(1, len(s.objects("ReviewActions")))
+        self.assertEqual(1, len([a for a in s.objects("ReviewActions") if a["action"] == "auto_publish"]))
+        self.assertEqual(2, len([a for a in s.objects("ReviewActions") if a["action"] == "auto_review_summary"]))
 
     def test_dry_run_does_not_change_publication_or_audit(self):
         s, reviewer = setup()
@@ -359,7 +360,7 @@ class AutomaticReviewTest(unittest.TestCase):
         self.assertEqual(1, summary["concurrent_edit_skipped"])
         self.assertEqual("保存直前の手修正", s.objects("Events")[0]["title"])
         self.assertEqual("未判断", s.objects("ReviewQueue")[0]["decision"])
-        self.assertEqual([], s.objects("ReviewActions"))
+        self.assertEqual([], [a for a in s.objects("ReviewActions") if a["action"] != "auto_review_summary"])
 
     def test_policy_stop_before_write_is_respected(self):
         s, reviewer = setup()
@@ -376,6 +377,36 @@ class AutomaticReviewTest(unittest.TestCase):
         s.get = stopped_get
         self.assertTrue(reviewer.run()["suspended_before_write"])
         self.assertEqual("確認待ち", s.objects("Events")[0]["publication_status"])
+
+    def test_summary_is_last_and_does_not_overwrite_concurrent_admin_audit(self):
+        s, reviewer = setup()
+        append = s.append
+        calls = 0
+        def concurrent_append(**kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                headers = s.tables["ReviewActions"][0]
+                s.tables["ReviewActions"].append([{"action_id":"owner-audit", "action":"owner_edit"}.get(h, "") for h in headers])
+            return append(**kwargs)
+        s.append = concurrent_append
+        reviewer.run()
+        actions = s.objects("ReviewActions")
+        self.assertEqual("owner-audit", actions[0]["action_id"])
+        self.assertEqual("auto_review_summary", actions[-1]["action"])
+        self.assertEqual("grounded_facts_r2", json.loads(actions[-1]["after_json"])["policy_revision"])
+
+    def test_failed_sheet_write_never_marks_reassessment_complete(self):
+        s, reviewer = setup()
+        update = s.batchUpdate
+        def failed_update(**kwargs):
+            if any(d["range"].startswith("'ReviewQueue'!") for d in kwargs["body"]["data"]):
+                raise RuntimeError("simulated failure")
+            return update(**kwargs)
+        s.batchUpdate = failed_update
+        with self.assertRaisesRegex(RuntimeError, "simulated failure"):
+            reviewer.run()
+        self.assertFalse(any(a["action"] == "auto_review_summary" for a in s.objects("ReviewActions")))
 
     def test_initial_enable_retry_does_not_undo_operator_stop(self):
         s, reviewer = setup()
