@@ -79,6 +79,7 @@
     .stat { padding: 19px; }
     .stat small { color: var(--muted); font-weight: 650; }
     .stat strong { display: block; font-size: 30px; margin-top: 8px; }
+    .stat strong.pending { font-size: 20px; }
     .panel { margin-top: 20px; padding: 21px; }
     .panel-head, .toolbar {
       display: flex; justify-content: space-between; gap: 16px; align-items: center; flex-wrap: wrap;
@@ -260,7 +261,7 @@
         </section>
         <section class="view" id="view-reviews">
           <div class="panel" style="margin-top:0">
-            <div class="panel-head"><div><h2>人の確認が必要な項目</h2><p class="panel-sub">原文の矛盾・金額や日時の判読困難・曖昧な重複などを確認します。原文不足や一覧の分割は下の「収集側対応待ち」へ分けます。</p></div></div>
+            <div class="panel-head"><div><h2 id="reviews-heading">人の確認が必要な項目</h2><p class="panel-sub" id="reviews-description">原文の矛盾・金額や日時の判読困難・曖昧な重複などを確認します。原文不足や一覧の分割は下の「収集側対応待ち」へ分けます。</p></div></div>
             <div class="review-list" id="reviews-list"></div>
           </div>
           <div class="panel"><div class="panel-head"><div><h2>収集側対応待ち</h2><p class="panel-sub">原文の復旧・取得方法の修正が必要です。人が公開可否を一件ずつ判断する作業とは分け、未確認のまま公開しません。</p></div></div><div class="review-list" id="technical-list"></div></div>
@@ -431,14 +432,14 @@
         ["公開中", state.data.stats.published],
         ["未公開候補", state.data.stats.pending],
         ["自動処理待ち", state.data.stats.processing || 0],
-        ["収集側対応待ち", state.data.stats.technical || 0],
+        ["収集側対応待ち", state.data.automatic_review?.reassessment_pending ? "再判定待ち" : state.data.stats.technical || 0],
         ["人の確認が必要", state.data.automatic_review?.reassessment_pending ? "再判定待ち" : state.data.automatic_review?.configured ? state.data.stats.review : "判定中"],
         ["取得エラー", state.data.stats.source_errors],
       ];
       const root = document.getElementById("stats");
       root.replaceChildren(...values.map(([label, value]) => {
         const card = el("div", "stat");
-        card.append(el("small", "", label), el("strong", "", String(value)));
+        card.append(el("small", "", label), el("strong", typeof value === "number" ? "" : "pending", String(value)));
         return card;
       }));
       const automatic = state.data.automatic_review || {};
@@ -571,6 +572,9 @@
     }
 
     function renderReviews() {
+      const pending = state.data.automatic_review?.reassessment_pending;
+      document.getElementById("reviews-heading").textContent = pending ? "確認候補（再判定待ち）" : "人の確認が必要な項目";
+      document.getElementById("reviews-description").textContent = pending ? "収集結果の原文照合がまだ完了していません。この一覧は暫定で、全件を手作業で確認する必要はありません。" : "原文の矛盾・金額や日時の判読困難・曖昧な重複などを確認します。原文不足や一覧の分割は下の収集側対応待ちへ分けます。";
       const reviewCards = state.data.reviews.map(review => reviewCard(review));
       const dashboardCards = state.data.reviews.slice(0, 4).map(review => reviewCard(review));
       const emptyText = state.data.automatic_review?.configured ? "現在、人の確認が必要な項目はありません。"
