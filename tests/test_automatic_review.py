@@ -41,6 +41,13 @@ def setup(items=None, *, ai=True):
 
 
 class AutomaticReviewTest(unittest.TestCase):
+    def test_letter_spaced_poster_labels_are_repaired_locally(self):
+        item = candidate()
+        item = replace(item, block_text=item.block_text.replace("開催日時", "開 催 日 時").replace("開催方法", "開 催 方 法").replace("主催", "主 催"), extracted_fields={})
+        s, reviewer = setup([item])
+        self.assertEqual(1, reviewer.run()["newly_published"])
+        self.assertEqual("奈良県臨床工学技士会", s.objects("Events")[0]["organizer_name"])
+
     def test_safe_pdf_rule_values_repair_missing_schedule_without_ai_resend(self):
         item = candidate()
         text = item.block_text
@@ -276,6 +283,21 @@ class AutomaticReviewTest(unittest.TestCase):
         s, reviewer = setup([item])
         self.assertEqual(1, reviewer.run()["human"])
         self.assertFalse(s.objects("Events")[0]["fee_verified"])
+
+    def test_fee_notes_and_corporate_abbreviations_are_not_source_disagreements(self):
+        self.assertFalse(AutomaticReviewer._conflicting_value("事前登録3,300円（税込）", "事前登録3,300円", "fee_text"))
+        self.assertFalse(AutomaticReviewer._conflicting_value("公益社団法人埼玉県臨床工学技士会", "(公社)埼玉県臨床工学技士会", "organizer_name"))
+        self.assertFalse(AutomaticReviewer._conflicting_value("東京都臨床工学技士会 集中治療専門委員会", "東京都臨床工学技士会 集中治療専門委員会 事務局", "organizer_name"))
+        self.assertTrue(AutomaticReviewer._conflicting_value("会員1000円 非会員2000円", "会員2000円 非会員1000円", "fee_text"))
+        self.assertTrue(AutomaticReviewer._conflicting_value("会員1000円", "会員2000円", "fee_text"))
+        self.assertTrue(AutomaticReviewer._conflicting_value("東京都臨床工学技士会", "神奈川県臨床工学技士会", "organizer_name"))
+
+    def test_poster_layout_cannot_turn_program_text_into_organizer(self):
+        item = candidate()
+        item = replace(item, block_text=item.block_text.replace("奈良県臨床工学技士会", "ハラスメントから学ぶ職場のコミュニケーション"), extracted_fields={})
+        s, reviewer = setup([item])
+        self.assertEqual(1, reviewer.run()["human"])
+        self.assertIn("AUTO_ORGANIZER_NAME_UNVERIFIED", s.objects("ReviewQueue")[0]["reason_codes"])
 
     def test_deterministic_shared_application_can_merge_unedited_duplicates(self):
         url = "https://peatix.com/event/12345"

@@ -15,7 +15,7 @@ from ce_seminar_finder.collection.sources import source_configs
 from ce_seminar_finder.collection.snapshots import SNAPSHOT_METHOD
 from ce_seminar_finder.extraction.refinement import candidate_from_payload, candidate_content_hash
 from ce_seminar_finder.extraction.validator import validate_extraction, _ground_text, _normalize_url, _fee_ground
-from ce_seminar_finder.extraction.rules import DATE_PATTERN, _normalized, extract_rule_values, _value_after
+from ce_seminar_finder.extraction.rules import DATE_PATTERN, LABELS, _normalized, extract_rule_values
 from ce_seminar_finder.sheets.schema import (
     EVENTS_HEADERS, EVENT_SOURCES_HEADERS, REVIEW_QUEUE_HEADERS, AUTO_FIELD_HEADERS,
     DOCUMENTS_HEADERS, DOCUMENT_TEXT_HEADERS, FIELD_OVERRIDE_HEADERS, SOURCES_HEADERS,
@@ -212,6 +212,10 @@ class AutomaticReviewer:
                     if (p["safe"] or allow_ocr) and id_ == auto.get("source_document_id"))
                 for text in contexts:
                     quote = evidence
+                    if name == "organizer_name" and (len(str(value)) > 100
+                            or not re.search(r"技士会|学会|研究会|協議会|委員会|大学|病院|会社|法人", str(value))
+                            or re.search(r"電話|FAX|TEL|https?://|@|〒", str(value), re.I)):
+                        continue
                     if name == "fee_text":
                         section = fee_section(text)
                         if re.search(r"非会員|会員|一般|学生", section) and re.search(r"未定|後日|別途|要相談|要確認", section):
@@ -358,9 +362,36 @@ class AutomaticReviewer:
             for auto in autos:
                 other = json_value(auto.get("normalized_value_json"))
                 if auto.get("field_name") == field and other not in (None, "") and not self._equal(event.get(field), other, field):
-                    if self._support({**event, field: other}, field, proofs, autos):
+                    if self._conflicting_value(event.get(field), other, field) and self._support({**event, field: other}, field, proofs, [auto]):
                         reasons.append("SOURCE_FIELD_CONFLICT")
         return ("human", sorted(set(reasons))) if reasons else ("publish", [])
+
+    @staticmethod
+    def _conflicting_value(current, other, field):
+        if field == "organizer_name":
+            canonical = lambda value: re.sub(r"\((?:公社|一社|公財|一財)\)", "", normalize_organizer(str(value)))
+            a, b = canonical(current), canonical(other)
+            # A legal-form abbreviation, committee office suffix or a shorter
+            # parent name is not a second organizer. Never use this to replace
+            # or ground an unsupported name; this only compares supported ones.
+            if a == b or min(len(a), len(b)) >= 8 and (a in b or b in a):
+                return False
+            if not re.search(r"技士会|学会|研究会|協議会|委員会|大学|病院|会社|法人", str(other)):
+                return False
+        if field == "fee_text":
+            def prices(value):
+                text = comparable_fee(value)
+                return set(re.findall(r"\d+(?:\.\d+)?円|無料", text))
+            if prices(current) != prices(other):
+                return True
+            for role in (r"非会員", r"(?<!非)会員", r"一般", r"学生"):
+                pattern = role + r"[^\d円]{0,50}(\d+(?:\.\d+)?円|無料)"
+                a = set(re.findall(pattern, comparable_fee(current)))
+                b = set(re.findall(pattern, comparable_fee(other)))
+                if a and b and a.isdisjoint(b):
+                    return True
+            return False
+        return True
 
     def _repair_fields(self, event, proofs, autos):
         """Reconcile saved source facts locally, without another AI request.
@@ -381,6 +412,10 @@ class AutomaticReviewer:
             contexts.extend((doc, pdf["text"]) for doc, pdf in proof.pdfs.items()
                 if pdf["safe"] and len(event_title) >= 8 and event_title in _ground_text(pdf["text"]))
             for doc, text in contexts:
+                # Posters commonly letter-space labels: 主 催 / 開 催 方 法.
+                # Normalize locally for review, not the saved AI request/cache.
+                for label in sorted(LABELS, key=len, reverse=True):
+                    text = re.sub(r"\s*".join(re.escape(c) for c in label), label, text)
                 for name, field in extract_rule_values(text).items():
                     target = FIELD_MAP.get(name, name)
                     if target:
