@@ -11,7 +11,8 @@ from urllib.parse import urlsplit
 
 from ce_seminar_finder.adapters.common import is_title_hint
 from ce_seminar_finder.collection.ingestion import CandidateIngestor, FIELD_MAP, stable_id, _cell
-from ce_seminar_finder.collection.sources import source_configs
+from ce_seminar_finder.collection.sources import source_configs, allowed_hosts
+from ce_seminar_finder.collection.models import EventCandidate
 from ce_seminar_finder.collection.snapshots import SNAPSHOT_METHOD
 from ce_seminar_finder.extraction.refinement import candidate_from_payload, candidate_content_hash
 from ce_seminar_finder.extraction.validator import validate_extraction, _ground_text, _normalize_url, _fee_ground
@@ -337,6 +338,13 @@ class AutomaticReviewer:
                 if not any(d >= self.now.astimezone(start.tzinfo).date() for d in future_dates):
                     return "archive", ["PAST_EVENT_CANDIDATE"]
         if classification is None:
+            # A lost/stale AI-to-input association is not a reason to pay for
+            # the same input again. A single, explicitly dated old notice can
+            # be closed using its verified HTML without adopting stale AI facts.
+            if self._grounded_old_notice(event, proofs):
+                return "archive", ["PAST_EVENT_CANDIDATE"]
+            if self._changed_listing_target(event, proofs, autos):
+                return "technical", ["AUTO_SOURCE_SPLIT_PENDING"]
             return "processing", ["AUTO_PROCESSING_PENDING"]
         reasons = []
         required = ("title", "organizer_name", "format", "fee_text", start_field)
@@ -366,6 +374,108 @@ class AutomaticReviewer:
                     if self._conflicting_value(event.get(field), other, field) and self._support({**event, field: other}, field, proofs, [auto]):
                         reasons.append("SOURCE_FIELD_CONFLICT")
         return ("human", sorted(set(reasons))) if reasons else ("publish", [])
+
+    def _grounded_old_notice(self, event, proofs):
+        """Close a specific old grounded notice; never infer a year or read OCR."""
+        title = _ground_text(str(event.get("title") or ""))
+        if (event.get("publication_status") != "確認待ち" or len(title) < 8 or not LEARNING_TITLE.search(title)
+                or event.get("format") == "オンデマンド" or truth(event.get("has_on_demand"))
+                or event.get("stream_start_at") or event.get("stream_end_at")):
+            return False
+        starts = []
+        for proof in proofs:
+            text = _normalized(proof.candidate.block_text)
+            for label in sorted(LABELS, key=len, reverse=True):
+                text = re.sub(r"\s*".join(re.escape(c) for c in label), label, text)
+            stream_hint_text = re.sub(r"録画\s*[,、]\s*録音\s*および\s*撮影\s*は\s*(?:ご遠慮|禁止)", "", text)
+            schedule_labels = []
+            for label in re.finditer(r"開催日時|開催日|日時|日程|会期", text):
+                if not re.search(r"申込|応募|受付|締切|投稿|掲載|更新|公開", text[max(0, label.start()-8):label.start()]):
+                    if DATE_PATTERN.match(text[label.end():].lstrip(" \t\r\n:：")):
+                        schedule_labels.append(label)
+            # A long catalogue, a second schedule or any streaming clue needs
+            # targeted recovery. A past initial date cannot close a stream.
+            if (not text or len(text) > 2500 or title not in _ground_text(text)
+                    or re.search(r"オンデマンド|配信|録画|e[- ]?learning|e[-ー]?ラーニング", stream_hint_text, re.I)
+                    or len(schedule_labels) != 1):
+                return False
+            field = extract_rule_values(text).get("event_start")
+            start = parsed(field.value) if field else None
+            if not start or start.date() >= self.now.astimezone(start.tzinfo).date():
+                return False
+            saved_start = parsed(event.get("event_start_at"))
+            if saved_start and saved_start.date() != start.date():
+                return False
+            dates = list(DATE_PATTERN.finditer(_normalized(proof.text)))
+            try:
+                future = any(datetime(int(m["year"]), int(m["month"]), int(m["day"]),
+                                      tzinfo=start.tzinfo).date() >= self.now.astimezone(start.tzinfo).date()
+                             for m in dates)
+            except ValueError:
+                return False
+            if not dates or future:
+                return False
+            rule = {"field_name": "event_start_at", "normalized_value_json": json.dumps(field.value),
+                    "evidence_text": field.evidence, "extractor": "rule", "source_document_id": proof.event_source_id}
+            if not self._support({**event, "event_start_at": field.value}, "event_start_at", [proof], [rule]):
+                return False
+            starts.append(start.date())
+        return bool(starts) and len(set(starts)) == 1
+
+    def _grounded_saved_pdf_end(self, event, sources):
+        """Legacy raw HTML can be absent while its exact official PDF survives.
+
+        This closure-only path does not invent a candidate snapshot or authorize
+        publication/AI. Require the event's specific PDF URL, its source record,
+        official host, successful text layer and verified stored text chunks.
+        """
+        url = source_url(event.get("primary_pdf_url") or "")
+        if not url or not urlsplit(url).path.lower().endswith(".pdf"):
+            return False
+        configs = {c.source_id: c for c in source_configs()}
+        found = []
+        for source in sources:
+            config = configs.get(source.get("source_id"))
+            if not config or urlsplit(url).hostname not in allowed_hosts(config):
+                continue
+            matches = [d for d in self.tables["Documents"]
+                       if d.get("event_source_id") == source.get("event_source_id")
+                       and d.get("document_type") == "pdf" and source_url(d.get("url") or "") == url]
+            if not matches:
+                continue
+            document = max(matches, key=lambda d: str(d.get("fetched_at") or ""))
+            if (document.get("extraction_method") != "text_layer" or document.get("extraction_status") != "success"
+                    or document.get("error_code") or not re.fullmatch(r"[0-9a-f]{64}", str(document.get("sha256") or ""))
+                    or urlsplit(document.get("final_url") or url).hostname not in allowed_hosts(config)):
+                return False
+            chunks = sorted((c for c in self.tables["DocumentTextChunks"] if c.get("document_id") == document.get("document_id")),
+                            key=lambda c: int(c["chunk_index"]))
+            if not chunks or any(hashlib.sha256(str(c.get("text") or "").encode()).hexdigest() != c.get("text_hash") for c in chunks):
+                return False
+            text = "\n".join(str(c["text"]) for c in chunks)
+            candidate = EventCandidate(config.source_id, source.get("source_url") or config.base_url,
+                                       url, str(event.get("title") or ""), block_text=text)
+            found.append(InputProof(source["event_source_id"], config.source_id, candidate,
+                                    candidate.title_hint+"\n"+text, {}))
+        return self._grounded_old_notice(event, found)
+
+    @staticmethod
+    def _changed_listing_target(event, proofs, autos):
+        """A previously processed event now points to an unrelated catalogue."""
+        title = _ground_text(str(event.get("title") or ""))
+        prior_sources = {a.get("source_document_id") for a in autos
+                         if a.get("field_name") == "is_event" and a.get("extractor") == "ai"
+                         and isinstance(location := json_value(a.get("evidence_location"), {}), dict)
+                         and location.get("cache_key")}
+        if len(title) < 8 or not proofs:
+            return False
+        for proof in proofs:
+            text = _normalized(proof.candidate.block_text)
+            if (proof.event_source_id not in prior_sources or title in _ground_text(text)
+                    or len(list(DATE_PATTERN.finditer(text))) < 2
+                    or len(LEARNING_TITLE.findall(text)) < 2):
+                return False
+        return True
 
     @staticmethod
     def _conflicting_value(current, other, field):
@@ -481,6 +591,10 @@ class AutomaticReviewer:
                     link_repairs[id_] = min(p.candidate.detail_url for p in items)
                     probe = {**probe, "primary_official_url": link_repairs[id_]}
             decision = self._base_decision(probe, items, auto_by_event[id_], any(s.get("event_source_id") in broken for s in sources))
+            if (decision == ("technical", ["AUTO_SOURCE_RECOVERY_PENDING"])
+                    and event.get("publication_status") == "確認待ち" and not event.get("last_admin_updated_at")
+                    and id_ not in overridden and self._grounded_saved_pdf_end(event, sources)):
+                decision = ("archive", ["PAST_EVENT_CANDIDATE"])
             # Human choices and overrides never become implicit publication.
             if event.get("last_admin_updated_at") or id_ in overridden or event.get("publication_status") in {"非公開", "アーカイブ"}:
                 if event.get("publication_status") != "公開":

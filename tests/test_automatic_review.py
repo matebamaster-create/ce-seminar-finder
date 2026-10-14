@@ -86,6 +86,107 @@ class AutomaticReviewTest(unittest.TestCase):
         s, reviewer = setup([candidate(date="令和8年9月20日")], ai=False)
         self.assertEqual(1, reviewer.run()["newly_archived"])
 
+    def test_old_single_notice_is_closed_without_resending_stale_ai_input(self):
+        item = replace(candidate(title="第8回 大分難病研究会"),
+            block_text="名称 第8回 大分難病研究会のご案内 会期 平成29年7月1日（土）15:00～ 会場 大分県医師会館 主催 フクダライフテック九州株式会社 詳細 応募締切：平成29年6月9日（金）",
+            extracted_fields={})
+        s, reviewer = setup([item], ai=False)
+        self.assertEqual(1, reviewer.run()["newly_archived"])
+        self.assertEqual("アーカイブ", s.objects("Events")[0]["publication_status"])
+
+    def test_old_initial_date_does_not_close_an_ongoing_or_unknown_stream(self):
+        item = replace(candidate(title="第8回 大分難病研究会"),
+            block_text="第8回 大分難病研究会 会期 平成29年7月1日 オンデマンド配信 終了日は未定", extracted_fields={})
+        s, reviewer = setup([item], ai=False)
+        self.assertEqual(1, reviewer.run()["processing"])
+        self.assertEqual("確認待ち", s.objects("Events")[0]["publication_status"])
+
+    def test_other_future_date_prevents_rule_only_old_notice_closure(self):
+        item = replace(candidate(title="第8回 大分難病研究会"),
+            block_text="第8回 大分難病研究会 会期 平成29年7月1日 再開催予定2026年12月1日", extracted_fields={})
+        s, reviewer = setup([item], ai=False)
+        self.assertEqual(1, reviewer.run()["processing"])
+
+    def test_changed_old_link_to_unrelated_catalogue_is_collection_work_not_ai_wait(self):
+        original = candidate(title="第15回 学術大会演題募集期間を延長しました")
+        s, reviewer = setup([original])
+        listing = replace(original, title_hint="第15回 学術大会を掲示しました",
+            block_text="第55回臨床工学セミナー 開催日時2026年12月19日\n第37回学術大会 開催日時2027年5月8日", extracted_fields={})
+        CandidateIngestor(s, "test").ingest([listing])
+        result = reviewer.run()
+        self.assertEqual(1, result["technical"])
+        self.assertNotIn("processing", result)
+        self.assertIn("AUTO_SOURCE_SPLIT_PENDING", s.objects("Events")[0]["review_reason_codes"])
+
+    def test_new_unprocessed_catalogue_is_not_mistaken_for_a_completed_ai_input(self):
+        item = replace(candidate(title="第15回 学術大会演題募集期間を延長しました"),
+            block_text="第55回臨床工学セミナー 開催日時2026年12月19日\n第37回学術大会 開催日時2027年5月8日", extracted_fields={})
+        s, reviewer = setup([item], ai=False)
+        self.assertEqual(1, reviewer.run()["processing"])
+
+    def test_invalid_secondary_date_does_not_crash_or_close_an_old_notice(self):
+        item = replace(candidate(title="第8回 大分難病研究会"),
+            block_text="第8回 大分難病研究会 会期 平成29年7月1日 応募締切2017年2月30日", extracted_fields={})
+        s, reviewer = setup([item], ai=False)
+        self.assertEqual(1, reviewer.run()["processing"])
+
+    def _legacy_pdf(self, *, method="text_layer", date="2025年10月4日", pdf_title=None):
+        item = candidate(title="第11回 呼吸療法セミナー")
+        url = "https://www.narace.jp/poster.pdf"
+        text = f"{pdf_title or item.title_hint}\n日 時：{date} 09:40～15:45\n会場 奈良県会館"
+        item = replace(item, block_text="詳細は公式PDFをご覧ください。", pdf_urls=(url,), extracted_fields={},
+            pdf_documents=({"url":url, "final_url":url, "document_type":"pdf", "sha256":"a"*64,
+                "extraction_status":"success", "extraction_method":method,
+                "chunks":[{"chunk_index":0,"page_from":1,"page_to":1,"text":text,"text_hash":hashlib.sha256(text.encode()).hexdigest()}]},))
+        s, reviewer = setup([item], ai=False)
+        h = s.tables["Documents"][0]
+        s.tables["Documents"] = [h, *[r for r in s.tables["Documents"][1:] if r[h.index("document_type")] == "pdf"]]
+        return s, reviewer
+
+    def test_exact_official_saved_pdf_closes_legacy_old_event_without_raw_snapshot(self):
+        s, reviewer = self._legacy_pdf()
+        self.assertEqual(1, reviewer.run()["newly_archived"])
+        self.assertEqual("アーカイブ", s.objects("Events")[0]["publication_status"])
+
+    def test_ocr_only_legacy_pdf_is_not_used_for_closure(self):
+        s, reviewer = self._legacy_pdf(method="ocr")
+        self.assertEqual(1, reviewer.run()["technical"])
+
+    def test_unrelated_saved_pdf_cannot_close_legacy_event(self):
+        s, reviewer = self._legacy_pdf(pdf_title="第12回 呼吸療法セミナー")
+        self.assertEqual(1, reviewer.run()["technical"])
+
+    def test_future_saved_pdf_is_not_closed_or_published(self):
+        s, reviewer = self._legacy_pdf(date="2026年11月1日")
+        self.assertEqual(1, reviewer.run()["technical"])
+        self.assertEqual("確認待ち", s.objects("Events")[0]["publication_status"])
+
+    def test_corrupt_saved_pdf_chunk_cannot_close_legacy_event(self):
+        s, reviewer = self._legacy_pdf()
+        h = s.tables["DocumentTextChunks"][0]
+        for row in s.tables["DocumentTextChunks"][1:]:
+            row[h.index("text_hash")] = "corrupt"
+        self.assertEqual(1, reviewer.run()["technical"])
+
+    def test_legacy_admin_choice_is_not_overridden_by_saved_pdf_closure(self):
+        s, reviewer = self._legacy_pdf()
+        h, row = s.tables["Events"][:2]
+        row[h.index("last_admin_updated_at")] = NOW.isoformat()
+        reviewer.run()
+        self.assertEqual("確認待ち", s.objects("Events")[0]["publication_status"])
+
+    def test_recording_prohibition_is_not_mistaken_for_ongoing_distribution(self):
+        item = replace(candidate(title="第8回 大分難病研究会"),
+            block_text="第8回 大分難病研究会 会期 平成29年7月1日 セミナー中の録画、\n録音および撮影はご遠慮願います。", extracted_fields={})
+        s, reviewer = setup([item], ai=False)
+        self.assertEqual(1, reviewer.run()["newly_archived"])
+
+    def test_recording_prohibition_does_not_erase_a_real_streaming_notice(self):
+        item = replace(candidate(title="第8回 大分難病研究会"),
+            block_text="第8回 大分難病研究会 会期 平成29年7月1日 オンデマンド配信 録画、録音および撮影はご遠慮願います。", extracted_fields={})
+        s, reviewer = setup([item], ai=False)
+        self.assertEqual(1, reviewer.run()["processing"])
+
     def test_explicit_completed_report_is_archived_without_guessing_date_year(self):
         title = "第15回学術大会"
         item = replace(candidate(title=title), title_hint=title+"の御礼",
