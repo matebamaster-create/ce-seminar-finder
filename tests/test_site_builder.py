@@ -108,6 +108,29 @@ class SiteBuilderTest(unittest.TestCase):
         self.assertIn('<span class="tag">血液浄化</span>', listing)
         self.assertNotIn('<span class="tag">血</span>', listing)
 
+    def test_detail_deadline_is_text_not_escaped_time_markup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "events.json"
+            data.write_text(json.dumps(self.payload(), ensure_ascii=False), encoding="utf-8")
+            build_static_site(data, root / "site")
+            detail = (root / "site/events/evt_active/index.html").read_text(encoding="utf-8")
+        self.assertIn('<dt>申込締切</dt><dd>8月7日 23:59</dd>', detail)
+        self.assertNotIn('&lt;time datetime=', detail)
+        self.assertIn('&lt;呼吸&gt; Webセミナー', detail)
+
+    def test_about_explains_current_scope_without_claiming_completeness(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "events.json"
+            data.write_text(json.dumps(self.payload(), ensure_ascii=False), encoding="utf-8")
+            build_static_site(data, root / "site")
+            about = (root / "site/about/index.html").read_text(encoding="utf-8")
+        self.assertIn('西日本30府県', about)
+        self.assertIn('取得対象は31団体', about)
+        self.assertIn('網羅していることを保証するものではありません', about)
+        self.assertNotIn('九州8県の臨床工学技士会', about)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -258,7 +258,7 @@ def _detail_page(event: dict[str, Any], generated_at: datetime) -> str:
   <section class="detail-grid" aria-label="イベント情報">
     {_fact('開催日時', _time_text(event.get('event_start_at')))}
     {_fact('配信期間', _period(event.get('stream_start_at'), event.get('stream_end_at'), event.get('stream_period_text')))}
-    {_fact('申込締切', _time(event.get('application_deadline_at')))}
+    {_fact('申込締切', _time_text(event.get('application_deadline_at')))}
     {_fact('参加費', event.get('fee_text') or event.get('fee_category', '要確認'))}
     {_fact('会場', event.get('venue_name') or event.get('venue_prefecture') or '要確認')}
     {_fact('対象・参加条件', event.get('audience_conditions', '要確認'))}
@@ -290,7 +290,8 @@ def _about_page(generated_at: datetime) -> str:
 <article class="detail prose">
   <p class="eyebrow">ABOUT</p>
   <h1>CE Seminar Finderについて</h1>
-  <p>九州8県の臨床工学技士会と日本臨床工学技士会に掲載された、セミナー・研修会等を横断して探すための限定共有版です。</p>
+  <p>西日本30府県（九州・沖縄、中国・四国、近畿、東海、北陸）の臨床工学技士会と日本臨床工学技士会に掲載された、セミナー・研修会等を横断して探すための限定共有版です。</p>
+  <p>取得対象は31団体です。掲載件数は原文の確認状況によって変わり、各地域のすべてのイベントを網羅していることを保証するものではありません。</p>
   <h2>掲載情報について</h2>
   <p>情報は公式サイト・公式PDFをもとに整理しています。正確な参加条件、料金、単位、締切は必ず公式ページで確認してください。</p>
   <h2>限定共有について</h2>
