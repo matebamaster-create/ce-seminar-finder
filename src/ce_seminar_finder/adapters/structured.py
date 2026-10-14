@@ -263,8 +263,9 @@ class HyogoOfficialAdapter(PatternHtmlAdapter):
 
 class WakayamaOfficialAdapter(PatternHtmlAdapter):
     """A dated PDF link is an event, not all PDFs on the listing page."""
-    def __init__(self):
+    def __init__(self, *, recovery_links=False):
         super().__init__(detail_patterns=(r"/seminar\.html",))
+        self.recovery_links = recovery_links
 
     def parse(self, source, document):
         soup = BeautifulSoup(document.text(), "html.parser")
@@ -272,7 +273,20 @@ class WakayamaOfficialAdapter(PatternHtmlAdapter):
         for link in soup.select("li a[href]"):
             title = link.get_text(" ", strip=True)
             url = urljoin(document.final_url, link["href"])
-            if not is_pdf_url(url) or not is_title_hint(title):
+            if not is_title_hint(title):
+                continue
+            if not is_pdf_url(url):
+                if not self.recovery_links:
+                    continue
+                # Published dated links to another organizer or an image are
+                # still source evidence. Do not fetch a login/payment page.
+                from ce_seminar_finder.collection.recovery import dated_link_schedule
+                schedule = dated_link_schedule(title)
+                if not DATE_PATTERN.search(_normalized(title)) or "開催" not in title:
+                    continue
+                candidates.append(EventCandidate(source.source_id, document.final_url, url, title,
+                    block_text=title, discovery_method="official_dated_link", confidence_hint=.85,
+                    extracted_fields=extract_rule_values(schedule, title_hint=schedule, allowed_urls=(url,))))
                 continue
             text = link.parent.get_text("\n", strip=True)
             candidates.append(EventCandidate(source.source_id, document.final_url, document.final_url,

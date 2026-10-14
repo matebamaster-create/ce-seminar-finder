@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -177,6 +178,11 @@ def _parser() -> argparse.ArgumentParser:
     automatic.add_argument("--enable-policy", action="store_true", help="所有者が明示承認した西日本31団体の条件付き自動公開を有効化")
     automatic.add_argument("--dry-run", action="store_true")
     automatic.add_argument("--summary", type=Path)
+    recovery = subparsers.add_parser("recover-source-snapshots", help="収集側対応待ちの既存原文だけを公式ページから復旧します（AIなし）")
+    recovery.add_argument("--spreadsheet-id", required=True)
+    recovery.add_argument("--source-ids", required=True)
+    recovery.add_argument("--dry-run", action="store_true")
+    recovery.add_argument("--summary", type=Path)
     return parser
 
 
@@ -252,6 +258,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.summary:
             args.summary.parent.mkdir(parents=True, exist_ok=True)
             args.summary.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(summary, ensure_ascii=False))
+        return 1 if summary["errors"] else 0
+
+    if args.command == "recover-source-snapshots":
+        from ce_seminar_finder.collection.recovery import recover_source_snapshots
+        ids = tuple(dict.fromkeys(x for x in re.split(r"[,\s]+", args.source_ids) if x))
+        if not ids:
+            raise ValueError("Explicit recovery source IDs are required")
+        summary = recover_source_snapshots(load_google_service(), args.spreadsheet_id, ids, dry_run=args.dry_run)
+        if args.summary:
+            args.summary.parent.mkdir(parents=True, exist_ok=True)
+            args.summary.write_text(json.dumps(summary, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
         print(json.dumps(summary, ensure_ascii=False))
         return 1 if summary["errors"] else 0
 

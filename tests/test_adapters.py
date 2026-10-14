@@ -103,6 +103,16 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(1, len(result.candidates[0].pdf_urls))
         self.assertTrue(result.candidates[0].extracted_fields["event_start"].value.startswith("2026-11-20"))
 
+    def test_wakayama_external_and_image_event_links_keep_their_own_literal_text(self):
+        html = '<li><a href="https://other.example/2027/">2026年06月22日：2027年05月08日-09日「第37回日本臨床工学会」開催のご案内</a><li><a href="/pdf/news/20251029.PNG">2025年11月29日開催「第18回滋賀県呼吸療法セミナー」のご案内</a></li></li>'
+        from ce_seminar_finder.adapters.structured import WakayamaOfficialAdapter
+        result = WakayamaOfficialAdapter(recovery_links=True).parse(source_config("src_wakayama"),text_document(html,"https://wce-rinkou.org/seminar.html"))
+        self.assertEqual(2, len(result.candidates))
+        self.assertTrue(result.candidates[0].extracted_fields["event_start"].value.startswith("2027-05-08"))
+        self.assertNotIn("第18回", result.candidates[0].block_text)
+        self.assertEqual("https://wce-rinkou.org/pdf/news/20251029.PNG",result.candidates[1].detail_url)
+        self.assertEqual((), result.candidates[1].pdf_urls)
+
     def test_nara_filters_national_feed_by_prefecture(self) -> None:
         rss = """<?xml version="1.0" encoding="UTF-8"?>
         <rss><channel>

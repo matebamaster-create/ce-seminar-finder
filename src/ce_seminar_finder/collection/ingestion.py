@@ -32,6 +32,16 @@ def stable_id(prefix: str, *values: str) -> str:
     return prefix + hashlib.sha256("\0".join(values).encode()).hexdigest()[:24]
 
 
+def candidate_source_identity(candidate):
+    url = canonical_url(candidate.detail_url)
+    if candidate.discovery_method in {"html_heading_block", "html_event_table", "nara_heading_table", "shizuoka_event_row", "fukui_public_block"}:
+        url = url.split("#", 1)[0] + "#event-" + stable_id("", candidate.title_hint)
+    if candidate.discovery_method == "html_pdf":
+        url += "#pdf-event-" + stable_id("", candidate.title_hint)
+    return url, stable_id("es_", candidate.source_id, url,
+                          candidate.title_hint if candidate.discovery_method == "html_pdf" else "")
+
+
 def _cell(value):
     if value is None:
         return ""
@@ -61,7 +71,7 @@ class CandidateIngestor:
             result = chr(65+rem) + result
         return result
 
-    def ingest(self, candidates):
+    def ingest(self, candidates, *, existing_only=False):
         if not candidates:
             return
         specs = {"Events": EVENTS_HEADERS, "EventSources": EVENT_SOURCES_HEADERS,
@@ -90,15 +100,12 @@ class CandidateIngestor:
                                   "values": [[_cell(value.get(h, "")) for h in specs[name]]]}
 
         for candidate in candidates:
-            url = canonical_url(candidate.detail_url)
-            if candidate.discovery_method in {"html_heading_block", "html_event_table", "nara_heading_table", "shizuoka_event_row", "fukui_public_block"}:
-                url = url.split("#",1)[0] + "#event-" + stable_id("", candidate.title_hint)
-            if candidate.discovery_method == "html_pdf":
-                url += "#pdf-event-" + stable_id("", candidate.title_hint)
-            event_source_id = stable_id("es_", candidate.source_id, url, candidate.title_hint if candidate.discovery_method == "html_pdf" else "")
+            url, event_source_id = candidate_source_identity(candidate)
             previous_source = sources_by_id.get(event_source_id)
             event = by_id.get(previous_source.get("event_id")) if previous_source else by_url.get(url)
             is_new = event is None
+            if is_new and existing_only:
+                continue
             fields = dict(candidate.extracted_fields)
             if is_new and not candidate.ai_result:
                 end_field = next((fields[k] for k in ("stream_end", "event_end", "event_start") if k in fields and fields[k].value), None)

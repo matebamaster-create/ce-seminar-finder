@@ -385,6 +385,15 @@ class AutomaticReviewer:
         starts = []
         for proof in proofs:
             text = _normalized(proof.candidate.block_text)
+            dated_link = proof.candidate.discovery_method == "official_dated_link"
+            if dated_link:
+                from ce_seminar_finder.collection.recovery import dated_link_schedule, dated_link_subject
+                same_link = _ground_text(proof.candidate.title_hint) == _ground_text(proof.candidate.block_text)
+                same_title = dated_link_subject(event.get("title")) == dated_link_subject(proof.candidate.title_hint)
+                schedule = dated_link_schedule(proof.candidate.title_hint)
+            else:
+                same_link = same_title = False
+                schedule = ""
             for label in sorted(LABELS, key=len, reverse=True):
                 text = re.sub(r"\s*".join(re.escape(c) for c in label), label, text)
             stream_hint_text = re.sub(r"録画\s*[,、]\s*録音\s*および\s*撮影\s*は\s*(?:ご遠慮|禁止)", "", text)
@@ -395,11 +404,12 @@ class AutomaticReviewer:
                         schedule_labels.append(label)
             # A long catalogue, a second schedule or any streaming clue needs
             # targeted recovery. A past initial date cannot close a stream.
-            if (not text or len(text) > 2500 or title not in _ground_text(text)
+            if (not text or len(text) > 2500 or not (title in _ground_text(text) or same_link and same_title)
                     or re.search(r"オンデマンド|配信|録画|e[- ]?learning|e[-ー]?ラーニング", stream_hint_text, re.I)
-                    or len(schedule_labels) != 1):
+                    or not (len(schedule_labels) == 1 or dated_link and same_link and same_title
+                            and "開催" in text and DATE_PATTERN.match(schedule))):
                 return False
-            field = extract_rule_values(text).get("event_start")
+            field = extract_rule_values(schedule or text, title_hint=schedule).get("event_start")
             start = parsed(field.value) if field else None
             if not start or start.date() >= self.now.astimezone(start.tzinfo).date():
                 return False
