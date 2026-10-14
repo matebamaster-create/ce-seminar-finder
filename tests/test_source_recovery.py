@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
+from pathlib import Path
 
 from test_automatic_review import setup, candidate, NOW
 from ce_seminar_finder.collection.ingestion import CandidateIngestor
@@ -12,6 +13,22 @@ from ce_seminar_finder.review.automatic import AutomaticReviewer
 
 
 class SourceRecoveryTest(unittest.TestCase):
+    def test_push_cannot_start_collection_or_ai_even_with_nonempty_inputs(self):
+        workflow = Path(__file__).resolve().parents[1] / ".github/workflows/daily.yml"
+        text = workflow.read_text()
+        for name in ("Install public-page renderer", "Collect explicitly enabled sources", "Install Japanese PDF OCR",
+                     "Refresh existing Google connection before AI", "Refine all public candidates with AI and PDF (never auto-publish)"):
+            step = text.split("- name: "+name, 1)[1].split("      - name:", 1)[0]
+            self.assertIn("github.event_name != 'push'", step)
+            self.assertIn("inputs.recovery_source_ids == ''", step)
+        self.assertGreaterEqual(text.count('if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then exit 0; fi'), 2)
+
+    def test_input_recovery_requires_manual_dispatch_and_explicit_source_ids(self):
+        text = (Path(__file__).resolve().parents[1] / ".github/workflows/daily.yml").read_text()
+        step = text.split("- name: Recover only matched official inputs (no AI)", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.recovery_source_ids != ''", step)
+        self.assertIn('if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then exit 1; fi', step)
+
     def legacy(self):
         item = replace(candidate(title="2025年11月20日開催「第10回 呼吸セミナー」のご案内"),
                        block_text="", extracted_fields={})

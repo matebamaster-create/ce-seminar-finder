@@ -90,16 +90,17 @@ jobs:
         if: github.event_name == 'push' || inputs.sync_current_events
         run: python -m ce_seminar_finder.cli init-sheet --spreadsheet-id "$CE_SPREADSHEET_ID"
       - name: Install public-page renderer
-        if: ${{ inputs.recovery_source_ids == '' && !inputs.resume_ai && !inputs.pending_ai_only && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all) }}
+        if: ${{ github.event_name != 'push' && inputs.recovery_source_ids == '' && !inputs.resume_ai && !inputs.pending_ai_only && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all) }}
         run: |
           npm install --prefix /tmp/ce-browser --no-save playwright
           /tmp/ce-browser/node_modules/.bin/playwright install --with-deps chromium
       - name: Collect explicitly enabled sources
-        if: ${{ inputs.recovery_source_ids == '' && !inputs.resume_ai && !inputs.pending_ai_only && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all) }}
+        if: ${{ github.event_name != 'push' && inputs.recovery_source_ids == '' && !inputs.resume_ai && !inputs.pending_ai_only && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all) }}
         env:
           NODE_PATH: /tmp/ce-browser/node_modules
           FULL_DETAIL: ${{ inputs.full_detail }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then exit 0; fi
           extra=()
           if [[ "$FULL_DETAIL" == "true" ]]; then extra+=(--full-detail); fi
           for region in kyushu chugoku-shikoku kansai tokai-hokuriku national; do
@@ -114,10 +115,11 @@ jobs:
               --markdown-summary "var/$region/summary.md" "${extra[@]}"
           done
       - name: Recover only matched official inputs (no AI)
-        if: inputs.recovery_source_ids != ''
+        if: github.event_name == 'workflow_dispatch' && inputs.recovery_source_ids != ''
         env:
           RECOVERY_SOURCE_IDS: ${{ inputs.recovery_source_ids }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then exit 1; fi
           python -m ce_seminar_finder.cli recover-source-snapshots \
             --source-ids "$RECOVERY_SOURCE_IDS" --spreadsheet-id "$CE_SPREADSHEET_ID" \
             --summary var/source-recovery-summary.json
@@ -128,23 +130,24 @@ jobs:
             if [[ -f "$summary" ]]; then cat "$summary" >> "$GITHUB_STEP_SUMMARY"; fi
           done
       - name: Install Japanese PDF OCR
-        if: ${{ inputs.recovery_source_ids == '' && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai || inputs.pending_ai_only) }}
+        if: ${{ github.event_name != 'push' && inputs.recovery_source_ids == '' && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai || inputs.pending_ai_only) }}
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-jpn tesseract-ocr-eng
       - name: Refresh existing Google connection before AI
-        if: ${{ inputs.recovery_source_ids == '' && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai || inputs.pending_ai_only) }}
+        if: ${{ github.event_name != 'push' && inputs.recovery_source_ids == '' && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai || inputs.pending_ai_only) }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
       - name: Refine all public candidates with AI and PDF (never auto-publish)
         id: ai-refine
-        if: ${{ inputs.recovery_source_ids == '' && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai || inputs.pending_ai_only) }}
+        if: ${{ github.event_name != 'push' && inputs.recovery_source_ids == '' && (github.event_name == 'schedule' || inputs.source_ids != '' || inputs.collect_all || inputs.resume_ai || inputs.pending_ai_only) }}
         continue-on-error: true
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RESUME_AI: ${{ inputs.resume_ai }}
           PENDING_AI_ONLY: ${{ inputs.pending_ai_only }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then exit 0; fi
           if [[ -z "$OPENAI_API_KEY" ]]; then
             echo "AIは未接続です。通常収集と承認済み情報の公開を継続します。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
